@@ -40,7 +40,7 @@
 
 ```sql
 CREATE TYPE role_name_enum AS ENUM ('SUPER_ADMIN', 'SCHOOL_ADMIN', 'BRANCH_ADMIN', 'DRIVER', 'PARENT', 'STUDENT');
-CREATE TYPE trip_type_enum AS ENUM ('PICKUP', 'DROP');
+CREATE TYPE trip_type_enum AS ENUM ('PICKUP', 'DROPOFF');
 CREATE TYPE trip_status_enum AS ENUM ('SCHEDULED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED');
 CREATE TYPE attendance_status_enum AS ENUM ('BOARDED', 'DROPPED', 'NO_SHOW');
 CREATE TYPE notification_status_enum AS ENUM ('PENDING', 'SENT', 'FAILED', 'READ');
@@ -513,7 +513,7 @@ CREATE TABLE IF NOT EXISTS student_route_assignments (
     student_id      INT NOT NULL,
     route_id        INT NOT NULL,
     stop_id         INT NOT NULL,
-    assignment_type VARCHAR(10) NOT NULL CHECK (assignment_type IN ('PICKUP', 'DROP')),
+    assignment_type trip_type_enum NOT NULL,
     is_active       BOOLEAN DEFAULT TRUE,
     assigned_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
