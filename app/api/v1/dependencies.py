@@ -1,15 +1,11 @@
 from typing import Any
 from fastapi import Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.db import get_db
 from app.core.security import decode_access_token, extract_user_id
 from app.core.enums import RoleName, BRANCH_SCOPED_ROLES, SCHOOL_SCOPED_ROLES
 from app.core.exceptions import (
-    InvalidTokenError,
     UnauthorizedError,
-    ForbiddenError,
     InsufficientRoleError,
     BranchScopeError,
     SchoolScopeError,
@@ -19,17 +15,16 @@ from app.core.exceptions import (
 # -----------------------------------------------------------------------------
 # HTTP Bearer Scheme
 # Extracts the Bearer token from the Authorization header.
-# auto_error=False — we raise our own exceptions instead of FastAPI's default
-# 403, giving consistent error responses across the app.
+# auto_error=False — we raise our own UnauthorizedError (401) instead of
+# FastAPI's default 403, giving consistent error responses across the app.
 # -----------------------------------------------------------------------------
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
 # -----------------------------------------------------------------------------
-# Current User Model
-# A lightweight dataclass — not an ORM model — that carries everything
-# downstream route handlers and services need about the authenticated user.
-# Avoids a DB round-trip on every request.
+# CurrentUser
+# A lightweight class populated entirely from the JWT payload.
+# No DB round-trip — everything needed for authorization lives in the token.
 # -----------------------------------------------------------------------------
 class CurrentUser:
     def __init__(self, payload: dict[str, Any]):
@@ -37,6 +32,9 @@ class CurrentUser:
         self.user_name: str = payload.get("user_name", "")
         self.roles: list[dict[str, Any]] = payload.get("roles", [])
 
+    # -------------------------------------------------------------------------
+    # Role checks
+    # -------------------------------------------------------------------------
     def has_role(self, role_name: RoleName) -> bool:
         """Return True if the user holds the given role (any scope)."""
         return any(r["role_name"] == role_name.value for r in self.roles)
@@ -46,10 +44,17 @@ class CurrentUser:
         role_values = {r.value for r in role_names}
         return any(r["role_name"] in role_values for r in self.roles)
 
+    # -------------------------------------------------------------------------
+    # Scope checks
+    # Mirrors the CHECK constraint logic in user_roles:
+    #   SUPER_ADMIN  → no scope restriction
+    #   SCHOOL_ADMIN → school-level scope, all branches within
+    #   others       → must match both school_id AND branch_id
+    # -------------------------------------------------------------------------
     def has_school_access(self, school_id: int) -> bool:
         """
-        Return True if the user has any role scoped to the given school.
-        SUPER_ADMIN passes automatically (no school scope needed).
+        Return True if the user has access to the given school.
+        SUPER_ADMIN passes automatically.
         """
         if self.has_role(RoleName.SUPER_ADMIN):
             return True
@@ -57,7 +62,7 @@ class CurrentUser:
 
     def has_branch_access(self, school_id: int, branch_id: int) -> bool:
         """
-        Return True if the user has any role scoped to the given branch.
+        Return True if the user has access to the given branch.
         SUPER_ADMIN and SCHOOL_ADMIN (for their school) pass automatically.
         """
         if self.has_role(RoleName.SUPER_ADMIN):
@@ -73,6 +78,11 @@ class CurrentUser:
             for r in self.roles
         )
 
+    # -------------------------------------------------------------------------
+    # Scope accessors
+    # Used by services to build tenant-filtered queries.
+    # None means "all" — used for SUPER_ADMIN / SCHOOL_ADMIN.
+    # -------------------------------------------------------------------------
     def get_accessible_school_ids(self) -> list[int] | None:
         """
         Return list of school_ids the user can access.
@@ -102,17 +112,19 @@ class CurrentUser:
         return list({
             r["branch_id"]
             for r in self.roles
-            if r.get("school_id") == school_id and r.get("branch_id") is not None
+            if r.get("school_id") == school_id
+            and r.get("branch_id") is not None
         })
 
     def __repr__(self) -> str:
-        return f"<CurrentUser user_id={self.user_id} user_name={self.user_name}>"
+        return (
+            f"<CurrentUser user_id={self.user_id} user_name={self.user_name}>"
+        )
 
 
 # -----------------------------------------------------------------------------
-# Core Dependencies
+# Core Auth Dependency
 # -----------------------------------------------------------------------------
-
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> CurrentUser:
@@ -131,26 +143,17 @@ async def get_current_user(
     return CurrentUser(payload)
 
 
-async def get_current_active_user(
-    current_user: CurrentUser = Depends(get_current_user),
-) -> CurrentUser:
-    """
-    Extends get_current_user — placeholder for is_active checks.
-    The is_active flag lives on the DB user record. If you need to
-    enforce it on every request, add a DB lookup here.
-    For most routes, the token's existence is sufficient.
-    """
-    return current_user
-
-
 # -----------------------------------------------------------------------------
 # Role Guard Factory
 # Returns a FastAPI dependency that enforces role-based access.
 #
 # Usage:
-#   @router.get("/admin")
-#   async def admin_route(
-#       current_user: CurrentUser = Depends(require_roles(RoleName.SUPER_ADMIN))
+#   # as a route dependency (no access to current_user in handler)
+#   @router.delete("/{id}", dependencies=[Depends(require_roles(RoleName.SUPER_ADMIN))])
+#
+#   # as a typed parameter (access to current_user in handler)
+#   async def create_bus(
+#       current_user: CurrentUser = Depends(require_roles(RoleName.BRANCH_ADMIN))
 #   ):
 # -----------------------------------------------------------------------------
 def require_roles(*required_roles: RoleName):
@@ -176,49 +179,38 @@ def require_roles(*required_roles: RoleName):
 
 
 # -----------------------------------------------------------------------------
-# Scope Guard Factory
-# Enforces school/branch-level tenant isolation on top of role checks.
+# Scope Guard Helpers
+# Used inside route handlers to enforce tenant isolation after
+# the role check has passed.
 #
-# Usage in routes that have school_id / branch_id path params:
-#   @router.get("/{school_id}/branches/{branch_id}")
+# Usage in route handler:
 #   async def get_branch(
 #       school_id: int,
 #       branch_id: int,
-#       current_user: CurrentUser = Depends(require_branch_access()),
+#       current_user: CurrentUser = Depends(get_current_user),
 #   ):
 #       if not current_user.has_branch_access(school_id, branch_id):
 #           raise BranchScopeError()
 # -----------------------------------------------------------------------------
-def require_school_access():
-    """
-    Dependency that ensures the current user is authenticated.
-    Actual school_id scope check is done in the route or service
-    using current_user.has_school_access(school_id).
-    """
-    async def dependency(
-        current_user: CurrentUser = Depends(get_current_user),
-    ) -> CurrentUser:
-        return current_user
-
-    return dependency
+def check_school_access(current_user: CurrentUser, school_id: int) -> None:
+    """Raise SchoolScopeError if user has no access to the given school."""
+    if not current_user.has_school_access(school_id):
+        raise SchoolScopeError()
 
 
-def require_branch_access():
-    """
-    Dependency that ensures the current user is authenticated.
-    Actual branch scope check is done in the route or service
-    using current_user.has_branch_access(school_id, branch_id).
-    """
-    async def dependency(
-        current_user: CurrentUser = Depends(get_current_user),
-    ) -> CurrentUser:
-        return current_user
-
-    return dependency
+def check_branch_access(
+    current_user: CurrentUser,
+    school_id: int,
+    branch_id: int,
+) -> None:
+    """Raise BranchScopeError if user has no access to the given branch."""
+    if not current_user.has_branch_access(school_id, branch_id):
+        raise BranchScopeError()
 
 
 # -----------------------------------------------------------------------------
-# Convenience — pre-built role dependencies for common patterns
+# Pre-built convenience dependencies
+# Import and use directly in router files.
 # -----------------------------------------------------------------------------
 
 # Only SUPER_ADMIN
@@ -234,5 +226,5 @@ BranchAdminRequired = Depends(
     require_roles(RoleName.SUPER_ADMIN, RoleName.SCHOOL_ADMIN, RoleName.BRANCH_ADMIN)
 )
 
-# Any authenticated user (just needs a valid token)
+# Any authenticated user (valid token, any role)
 AnyAuthenticated = Depends(get_current_user)
