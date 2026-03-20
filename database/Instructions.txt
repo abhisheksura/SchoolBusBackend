@@ -1,0 +1,28 @@
+# Login to postgres to Create or Alter anything
+
+sudo -u postgres psql
+PWD - postgres
+
+create database schoolbus;
+
+ALTER DATABASE schoolbus owner to busapp_user ;
+
+GRANT ALL ON SCHEMA public TO busapp_user;
+ALTER SCHEMA public OWNER TO busapp_user;
+
+-- Grant Default Previliges
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+GRANT ALL ON TABLES TO busapp_user;
+
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+GRANT ALL ON SEQUENCES TO busapp_user;
+
+
+# Login to postgres
+
+sudo -i -u postgres
+
+psql -U busapp_user -d schoolbus -h localhost
+PWD - BusTracker
+
