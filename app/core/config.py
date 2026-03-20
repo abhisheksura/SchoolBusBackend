@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     BCRYPT_ROUNDS: int = 12
 
     # GPS Security
-    GPS_DEVICE_API_KEY: str
+    # GPS_DEVICE_API_KEY: str
 
     # CORS — comma-separated origins in .env, e.g.:
     # ALLOWED_ORIGINS=http://localhost:3000,https://app.example.com
