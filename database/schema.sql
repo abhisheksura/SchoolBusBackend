@@ -739,3 +739,21 @@ ON student_leave_requests(status);
 
 CREATE INDEX IF NOT EXISTS idx_leave_date_range
 ON student_leave_requests(start_date, end_date);
+
+-- ========== 23. REFRESH TOKENS ==========
+
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+    token_id    BIGSERIAL PRIMARY KEY,
+    user_id     BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    token_hash  TEXT NOT NULL UNIQUE,
+    issued_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at  TIMESTAMP NOT NULL,
+    revoked_at  TIMESTAMP DEFAULT NULL,
+    device_info VARCHAR(512) DEFAULT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id
+    ON refresh_tokens(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_active
+    ON refresh_tokens(user_id, revoked_at);

@@ -4,7 +4,7 @@ from fastapi import APIRouter
 # Domain routers are imported here as they are built.
 # Uncomment each line once the domain router file is created.
 # -----------------------------------------------------------------------------
-# from app.auth.router         import router as auth_router
+from app.auth.router         import router as auth_router
 # from app.schools.router      import router as schools_router
 # from app.branches.router     import router as branches_router
 # from app.fleet.router        import router as fleet_router
@@ -20,7 +20,7 @@ api_router = APIRouter(prefix="/api/v1")
 # Register domain routers
 # Each domain gets its own prefix and tags for clean OpenAPI grouping.
 # -----------------------------------------------------------------------------
-# api_router.include_router(auth_router,          prefix="/auth",          tags=["Auth"])
+api_router.include_router(auth_router,          prefix="/auth",          tags=["Auth"])
 # api_router.include_router(schools_router,       prefix="/schools",       tags=["Schools"])
 # api_router.include_router(branches_router,      prefix="/branches",      tags=["Branches"])
 # api_router.include_router(fleet_router,         prefix="/fleet",         tags=["Fleet"])
