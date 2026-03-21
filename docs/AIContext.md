@@ -427,9 +427,22 @@ if new_status not in TRIP_STATUS_TRANSITIONS[trip.trip_status]:
 ```
 
 ### Tenant Scope Validation — always at the start of route handlers
+- **Read endpoints** (`GET`) → return `404` on scope violation — never reveals existence of other tenants' data
+- **Write endpoints** (`POST`, `PATCH`, `DELETE`) → return `403` on scope violation — admin already knows the resource exists
+ 
 ```python
-check_school_access(current_user, school_id)   # school-scoped routes
-check_branch_access(current_user, school_id, branch_id)  # branch-scoped routes
+# GET — scope violation returns 404
+async def get_school(db, school_id, current_user):
+    school = await school_repo.get_school_by_school_id(db, school_id)  # 404 if not found
+    if not current_user.has_school_access(school_id):
+        raise SchoolNotFoundError(identifier=school_id)  # 404, not 403
+    return school
+ 
+# POST/PATCH/DELETE — scope violation returns 403
+async def update_school(db, school_id, payload, current_user):
+    if not current_user.has_role(RoleName.SUPER_ADMIN):
+        raise ForbiddenError()  # 403
+    ...
 ```
 
 ---
@@ -447,6 +460,7 @@ check_branch_access(current_user, school_id, branch_id)  # branch-scoped routes
 | 7 | `is_active` enforcement on every request | ⏳ Not decided | Currently token presence is sufficient |
 | 8 | Soft delete pattern — consistent `is_active` flag across all domains | ⏳ Not decided | All tables have `is_active` |
 | 9 | Dockerfile + docker-compose setup | ⏳ Pending | Do after all domains complete |
+| 10 | Refresh token rotation on every refresh | ⏳ Not decided | Currently reusing same token — rotation = issue new token + revoke old on each refresh |
 
 ---
 
@@ -529,6 +543,23 @@ check_branch_access(current_user, school_id, branch_id)  # branch-scoped routes
 - Uvicorn target: `app.main:app`
 
 ---
+## ✅ Completed — `auth/` Domain
+ 
+### Status: Fully implemented ✅
+ 
+> See `docs/Auth.md` for the full supplementary design document.
+> If a better/optimal approach is found, update both this section and `docs/Auth.md`.
+
+---
+ 
+### Tables Involved
+| Table | Notes |
+|---|---|
+| `users` | Authentication — login, password, is_active |
+| `roles` | Seeded once — `SUPER_ADMIN`, `SCHOOL_ADMIN`, etc. |
+| `user_roles` | RBAC join — one user, multiple scoped roles |
+| `refresh_tokens` | New table — hashed tokens with expiry + revocation |
+ 
 
 ## ⏭️ Next Up — `auth/` Domain
 
@@ -555,6 +586,243 @@ check_branch_access(current_user, school_id, branch_id)  # branch-scoped routes
    - `POST /auth/logout`
    - `POST /auth/logout-all`
 
+---
+
+ 
+### Implementation Order
+1. `auth/models.py`          ✅ Done
+2. `auth/schemas.py`         ✅ Done
+3. `auth/repository.py`      ✅ Done
+4. `auth/service.py`         ✅ Done
+5. `api/v1/auth.py`          ✅ Done
+6. Uncomment auth router in `app/api/v1/router.py` ✅ Done
+ 
+---
+ 
+## ⏭️ Next Up — `schools/` Domain
+ 
+> Full design document: `docs/Schools.md`
+ 
+### Status: Design finalized ✅ — Ready to code
+ 
+### Tables Involved
+| Table | Notes |
+|---|---|
+| `schools` | Top-level tenant — `school_name` (renamed from `name`) |
+| `branches` | Scoped to school — lives in this domain, not separate |
+ 
+---
+ 
+### `schools/models.py` — ORM Models
+ 
+**`School`** → maps to `schools` table
+```
+school_id   : SERIAL PK
+school_name : VARCHAR(255) NOT NULL   ← renamed from name
+is_active   : BOOLEAN DEFAULT TRUE
+created_at  : TIMESTAMP
+updated_at  : TIMESTAMP
+```
+ 
+**`Branch`** → maps to `branches` table
+```
+branch_id      : SERIAL PK
+school_id      : INT FK → schools (CASCADE)
+branch_name    : VARCHAR(150) NOT NULL
+branch_address : TEXT nullable
+branch_phone   : VARCHAR(20) nullable
+branch_email   : VARCHAR(255) nullable
+is_active      : BOOLEAN DEFAULT TRUE
+created_at     : TIMESTAMP
+updated_at     : TIMESTAMP
+UNIQUE (branch_id, school_id)
+```
+ 
+**Relationships:**
+```
+School → Branch  (one-to-many, back_populates="school")
+Branch → School  (many-to-one, back_populates="branches")
+```
+ 
+---
+ 
+### `schools/schemas.py` — Pydantic Models
+ 
+**School Requests:**
+```
+SchoolCreate → school_name: str (3-255 chars)
+SchoolUpdate → school_name: str | None, is_active: bool | None
+```
+ 
+**School Responses:**
+```
+SchoolResponse       → school_id, school_name, is_active, created_at, updated_at
+SchoolDetailResponse → SchoolResponse + branches: list[BranchResponse]
+```
+ 
+**Branch Requests:**
+```
+BranchCreate → branch_name (3-150 chars), branch_address | None,
+               branch_phone | None, branch_email | None
+BranchUpdate → branch_name | None, branch_address | None,
+               branch_phone | None, branch_email | None, is_active | None
+```
+ 
+**Branch Responses:**
+```
+BranchResponse → branch_id, school_id, branch_name, branch_address,
+                 branch_phone, branch_email, is_active, created_at, updated_at
+```
+ 
+**Paginated:**
+```
+PaginatedSchoolResponse → items: list[SchoolResponse], total, page, page_size, pages
+PaginatedBranchResponse → items: list[BranchResponse], total, page, page_size, pages
+```
+ 
+> Also creates `core/schemas.py` with shared `PaginatedResponse[T]` — resolves Open Decision #1.
+ 
+---
+ 
+### `schools/repository.py` — DB Queries
+ 
+**School queries:**
+```python
+get_school_by_school_id(db, school_id) -> School                     # raises SchoolNotFoundError
+get_school_by_school_id_or_none(db, school_id) -> School | None
+get_all_schools(db, limit, offset, active_only) -> tuple[list[School], int]
+get_schools_by_school_ids(db, school_ids, limit, offset, active_only) -> tuple[list[School], int]
+create_school(db, school_name) -> School
+update_school_by_school_id(db, school_id, **kwargs) -> School
+deactivate_school_by_school_id(db, school_id) -> School
+```
+ 
+**Branch queries:**
+```python
+get_branch_by_branch_id(db, branch_id, school_id) -> Branch          # raises BranchNotFoundError
+get_branch_by_branch_id_or_none(db, branch_id, school_id) -> Branch | None
+get_all_branches_by_school_id(db, school_id, limit, offset, active_only) -> tuple[list[Branch], int]
+get_branches_by_branch_ids(db, branch_ids, school_id, limit, offset, active_only) -> tuple[list[Branch], int]
+create_branch(db, school_id, branch_name, branch_address, branch_phone, branch_email) -> Branch
+update_branch_by_branch_id(db, branch_id, school_id, **kwargs) -> Branch
+deactivate_branch_by_branch_id(db, branch_id, school_id) -> Branch
+```
+ 
+---
+ 
+### `schools/service.py` — Business Logic
+ 
+**School functions:**
+```python
+create_school(db, payload, current_user) -> SchoolResponse
+    1. require SUPER_ADMIN → 403 if not
+    2. create_school in repo
+    3. return SchoolResponse
+ 
+get_school(db, school_id, current_user) -> SchoolResponse
+    1. get_school_by_school_id       → 404 if not found
+    2. not has_school_access         → 404 (not 403 — never reveal existence)
+    3. return SchoolResponse
+ 
+get_all_schools(db, page, page_size, current_user) -> PaginatedSchoolResponse
+    1. SUPER_ADMIN → get_all_schools (no filter)
+       others      → get_schools_by_school_ids(accessible_school_ids)
+    2. return PaginatedSchoolResponse
+ 
+update_school(db, school_id, payload, current_user) -> SchoolResponse
+    1. require SUPER_ADMIN → 403 if not
+    2. get_school_by_school_id → 404 if not found
+    3. update_school_by_school_id
+    4. return SchoolResponse
+ 
+deactivate_school(db, school_id, current_user) -> SchoolResponse
+    1. require SUPER_ADMIN → 403 if not
+    2. get_school_by_school_id → 404 if not found
+    3. deactivate_school_by_school_id
+    4. return SchoolResponse
+```
+ 
+**Branch functions:**
+```python
+create_branch(db, school_id, payload, current_user) -> BranchResponse
+    1. require SUPER_ADMIN or SCHOOL_ADMIN scoped to school_id → 403 if not
+    2. get_school_by_school_id → 404 if school not found or inactive
+    3. create_branch in repo
+    4. return BranchResponse
+ 
+get_branch(db, school_id, branch_id, current_user) -> BranchResponse
+    1. get_branch_by_branch_id       → 404 if not found
+    2. not has_branch_access         → 404 (not 403)
+    3. return BranchResponse
+ 
+get_all_branches(db, school_id, page, page_size, current_user) -> PaginatedBranchResponse
+    1. get_school_by_school_id       → 404 if school not found
+    2. not has_school_access         → 404 (not 403)
+    3. SUPER_ADMIN/SCHOOL_ADMIN → get_all_branches_by_school_id
+       others                   → get_branches_by_branch_ids(accessible_branch_ids)
+    4. return PaginatedBranchResponse
+ 
+update_branch(db, school_id, branch_id, payload, current_user) -> BranchResponse
+    1. require SUPER_ADMIN or SCHOOL_ADMIN scoped to school_id → 403 if not
+    2. get_branch_by_branch_id → 404 if not found
+    3. update_branch_by_branch_id
+    4. return BranchResponse
+ 
+deactivate_branch(db, school_id, branch_id, current_user) -> BranchResponse
+    1. require SUPER_ADMIN or SCHOOL_ADMIN scoped to school_id → 403 if not
+    2. get_branch_by_branch_id → 404 if not found
+    3. deactivate_branch_by_branch_id
+    4. return BranchResponse
+```
+ 
+---
+ 
+### `api/v1/schools.py` — Routes
+ 
+**School routes:**
+| Method | Path | Auth | Status | Scope violation |
+|---|---|---|---|---|
+| `POST` | `/schools/` | `SUPER_ADMIN` | `201` | `403` |
+| `GET` | `/schools/` | Bearer + tenant filter | `200` | filtered at query level |
+| `GET` | `/schools/{school_id}` | Bearer + school scope | `200` | `404` |
+| `PATCH` | `/schools/{school_id}` | `SUPER_ADMIN` | `200` | `403` |
+| `DELETE` | `/schools/{school_id}` | `SUPER_ADMIN` | `200` | `403` |
+ 
+**Branch routes:**
+| Method | Path | Auth | Status | Scope violation |
+|---|---|---|---|---|
+| `POST` | `/schools/{school_id}/branches/` | `SUPER_ADMIN` or `SCHOOL_ADMIN` | `201` | `403` |
+| `GET` | `/schools/{school_id}/branches/` | Bearer + tenant filter | `200` | `404` on school, filtered at query level for branches |
+| `GET` | `/schools/{school_id}/branches/{branch_id}` | Bearer + branch scope | `200` | `404` |
+| `PATCH` | `/schools/{school_id}/branches/{branch_id}` | `SUPER_ADMIN` or `SCHOOL_ADMIN` | `200` | `403` |
+| `DELETE` | `/schools/{school_id}/branches/{branch_id}` | `SUPER_ADMIN` or `SCHOOL_ADMIN` | `200` | `403` |
+ 
+---
+ 
+### Key Design Decisions
+ 
+| Decision | Rationale |
+|---|---|
+| `school_name` instead of `name` | Consistent fully-qualified naming across entire project |
+| `branches` lives in `schools/` domain | Branch cannot exist without a school — tight coupling is correct |
+| `GET` scope violations return `404` | Never reveal existence of other tenants' data |
+| `POST/PATCH/DELETE` scope violations return `403` | Admin already knows resource exists |
+| `DELETE` soft-deletes, returns `200` + object | Client gets confirmation of what was deactivated |
+| Branch routes nested under `/schools/{school_id}` | Enforces school scope at URL level |
+| `PATCH` not `PUT` | Partial updates — only send fields you want to change |
+| `core/schemas.py` created before this domain | `PaginatedResponse[T]` needed for list endpoints |
+ 
+---
+ 
+### Implementation Order
+1. `core/schemas.py`                              ⏳ First — shared `PaginatedResponse[T]`
+2. `schools/models.py`                            ⏳
+3. `schools/schemas.py`                           ⏳
+4. `schools/repository.py`                        ⏳
+5. `schools/service.py`                           ⏳
+6. `api/v1/schools.py`                            ⏳
+7. Uncomment schools router in `api/v1/router.py` ⏳
+ 
 ---
 
 ## 📦 Dependencies to Install
