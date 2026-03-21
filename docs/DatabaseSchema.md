@@ -57,7 +57,7 @@ Top-level tenant. Every other resource traces back to a school.
 ```sql
 CREATE TABLE IF NOT EXISTS schools (
     school_id SERIAL PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
+    school_name VARCHAR(255) NOT NULL,
     is_active   BOOLEAN      NOT NULL DEFAULT TRUE,
     created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
