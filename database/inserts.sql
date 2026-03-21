@@ -6,11 +6,11 @@ INSERT INTO roles (role_name) VALUES
 ('PARENT'),
 ('STUDENT');
 
-INSERT INTO schools (name)
+INSERT INTO schools (school_name)
 VALUES 
 ('Green Valley School'),
 ('Sunrise Public School')
-RETURNING school_id, name;
+RETURNING school_id, school_name;
 
 
 INSERT INTO branches (school_id, branch_name, branch_address)
