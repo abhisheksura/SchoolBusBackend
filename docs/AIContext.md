@@ -33,11 +33,11 @@
 | ORM loading | `selectinload` / `joinedload` only — no lazy loading (incompatible with async) |
 | Queries | SQLAlchemy Core-style `select()` — never `session.query()` (legacy sync API) |
 | Background tasks | FastAPI `BackgroundTasks` or `asyncio` — no threading |
+| Data access pattern | Repository pattern — dedicated `repository.py` per domain |
 
 ---
 
 ## 🏗️ Folder Structure (Finalized)
-
 ```
 app/
 ├── core/                        # Pure shared infrastructure — zero FastAPI imports
@@ -55,75 +55,82 @@ app/
 │   └── v1/
 │       ├── __init__.py          ✅ Done
 │       ├── dependencies.py      ✅ Done  ← CurrentUser, require_roles, scope guards
-│       └── router.py            ✅ Done  ← aggregates all domain routers as api_router
+│       ├── router.py            ✅ Done  ← aggregates all domain routers as api_router
+│       ├── auth.py              ✅ Done  ← auth HTTP routes
+│       ├── schools.py           ⏳ Pending
+│       ├── branches.py          ⏳ Pending
+│       ├── fleet.py             ⏳ Pending
+│       ├── routes.py            ⏳ Pending
+│       ├── trips.py             ⏳ Pending
+│       ├── students.py          ⏳ Pending
+│       ├── attendance.py        ⏳ Pending
+│       └── notifications.py     ⏳ Pending
 │
-├── auth/                        ⏳ Next
+├── auth/                        ✅ Done
 │   ├── __init__.py
 │   ├── models.py                ← User, Role, UserRole, RefreshToken ORM models
 │   ├── schemas.py               ← Pydantic request/response models
-│   ├── service.py               ← login, refresh, logout business logic
-│   └── router.py                ← FastAPI routes
+│   ├── repository.py            ← all auth DB queries
+│   └── service.py               ← login, refresh, logout business logic
 │
 ├── schools/                     ⏳ Pending
 │   ├── __init__.py
 │   ├── models.py
 │   ├── schemas.py
-│   ├── service.py
-│   └── router.py
+│   ├── repository.py
+│   └── service.py
 │
 ├── branches/                    ⏳ Pending
 │   ├── __init__.py
 │   ├── models.py
 │   ├── schemas.py
-│   ├── service.py
-│   └── router.py
+│   ├── repository.py
+│   └── service.py
 │
 ├── fleet/                       ⏳ Pending
 │   ├── __init__.py
 │   ├── models.py                ← Bus, Driver, GPSDevice, BusDeviceAssignment
 │   ├── schemas.py
-│   ├── service.py
-│   └── router.py
+│   ├── repository.py
+│   └── service.py
 │
 ├── routes/                      ⏳ Pending
 │   ├── __init__.py
 │   ├── models.py                ← Route, Stop, RouteStop
 │   ├── schemas.py
-│   ├── service.py
-│   └── router.py
+│   ├── repository.py
+│   └── service.py
 │
 ├── trips/                       ⏳ Pending
 │   ├── __init__.py
 │   ├── models.py                ← Trip, TripLiveStatus, GPSLog
 │   ├── schemas.py
-│   ├── service.py
-│   └── router.py
+│   ├── repository.py
+│   └── service.py
 │
 ├── students/                    ⏳ Pending
 │   ├── __init__.py
 │   ├── models.py                ← Student, Parent, StudentParent, StudentLeaveRequest
 │   ├── schemas.py
-│   ├── service.py
-│   └── router.py
+│   ├── repository.py
+│   └── service.py
 │
 ├── attendance/                  ⏳ Pending
 │   ├── __init__.py
 │   ├── models.py                ← StudentAttendance, StudentRouteAssignment
 │   ├── schemas.py
-│   ├── service.py
-│   └── router.py
+│   ├── repository.py
+│   └── service.py
 │
 ├── notifications/               ⏳ Pending
 │   ├── __init__.py
 │   ├── models.py                ← NotificationLog
 │   ├── schemas.py
-│   ├── service.py
-│   └── router.py
+│   ├── repository.py
+│   └── service.py
 │
 └── main.py                      ✅ Done
 ```
-
----
 
 ---
 
@@ -173,11 +180,14 @@ from app.students.schemas import StudentResponse
 ### Domain File Responsibilities
 | File | Responsibility |
 |---|---|
-| `models.py` | SQLAlchemy ORM models only — no business logic |
-| `schemas.py` | Pydantic request/response models only — no DB access |
-| `repository.py` | All DB queries (select, insert, update, delete) — no business logic |
-| `service.py` | Business logic + orchestration — calls repository, raises exceptions |
-| `router.py` | FastAPI routes only — thin layer, delegates to service |
+| `{domain}/models.py` | SQLAlchemy ORM models only — no business logic |
+| `{domain}/schemas.py` | Pydantic request/response models only — no DB access |
+| `{domain}/repository.py` | All DB queries (select, insert, update, delete) — no business logic |
+| `{domain}/service.py` | Business logic + orchestration — calls repository, raises exceptions |
+| `api/v1/{domain}.py` | FastAPI routes only — thin layer, delegates to service |
+ 
+> Note: `router.py` no longer lives inside domain folders.
+> All HTTP route files live in `app/api/v1/` named after their domain (e.g. `auth.py`, `schools.py`).
 
 ### Router Conventions
 - All routers defined as `router = APIRouter()`
