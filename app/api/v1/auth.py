@@ -36,7 +36,7 @@ async def login(
 ) -> TokenResponse:
     """
     Authenticate a user and issue JWT tokens.
-    device_info falls back to the User-Agent header if not provided in the body.
+    device_info falls back to the User-Agent header if not provided in body.
     """
     device_info = payload.device_info or request.headers.get("user-agent")
     return await auth_service.login(

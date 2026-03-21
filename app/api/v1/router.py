@@ -4,7 +4,7 @@ from fastapi import APIRouter
 # Domain routers are imported here as they are built.
 # Uncomment each line once the domain router file is created.
 # -----------------------------------------------------------------------------
-from app.auth.router         import router as auth_router
+from app.api.v1.auth            import router as auth_router
 # from app.schools.router      import router as schools_router
 # from app.branches.router     import router as branches_router
 # from app.fleet.router        import router as fleet_router
