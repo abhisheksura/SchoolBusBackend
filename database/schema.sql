@@ -15,8 +15,8 @@ CREATE TABLE IF NOT EXISTS schools (
     school_id SERIAL PRIMARY KEY,
     school_name VARCHAR(255) NOT NULL,
     is_active   BOOLEAN      NOT NULL DEFAULT TRUE,
-    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- ========== 2. BRANCHES ==========
@@ -28,8 +28,8 @@ CREATE TABLE IF NOT EXISTS branches (
     branch_phone VARCHAR(20),
     branch_email VARCHAR(255),
     is_active  BOOLEAN      NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (branch_id, school_id)
 );
 
@@ -43,8 +43,8 @@ CREATE TABLE IF NOT EXISTS users (
     phone VARCHAR(20) UNIQUE,
     password_hash TEXT NOT NULL,
     is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 
@@ -55,8 +55,8 @@ CREATE TABLE IF NOT EXISTS roles (
     role_name role_name_enum UNIQUE NOT NULL,
     description TEXT,
     is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- ========== 5. USER ROLES (RBAC) ==========
@@ -72,8 +72,8 @@ CREATE TABLE IF NOT EXISTS user_roles (
     role_name role_name_enum NOT NULL,
     is_active BOOLEAN DEFAULT TRUE,
 
-    assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     FOREIGN KEY (branch_id, school_id)
         REFERENCES branches(branch_id, school_id)
@@ -100,8 +100,8 @@ CREATE TABLE IF NOT EXISTS drivers (
     phone VARCHAR(20),
     license_number VARCHAR(100),
     is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
    
     FOREIGN KEY (branch_id, school_id)
         REFERENCES branches(branch_id, school_id)
@@ -119,8 +119,8 @@ CREATE TABLE IF NOT EXISTS buses (
     bus_number VARCHAR(50) NOT NULL,
     capacity INT NOT NULL CHECK (capacity > 0),
     is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     FOREIGN KEY (branch_id, school_id)
         REFERENCES branches(branch_id, school_id)
@@ -136,8 +136,8 @@ CREATE TABLE IF NOT EXISTS gps_devices (
     branch_id INT NOT NULL,
     device_imei VARCHAR(100) UNIQUE NOT NULL,
     is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     FOREIGN KEY (branch_id, school_id)
         REFERENCES branches(branch_id, school_id)
@@ -156,8 +156,8 @@ CREATE TABLE IF NOT EXISTS routes (
     route_name VARCHAR(100) NOT NULL,
     description TEXT,
     is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     FOREIGN KEY (school_id) REFERENCES schools(school_id) ON DELETE CASCADE,
     -- Composite Foreign Key: branch belongs to school
@@ -179,8 +179,8 @@ CREATE TABLE IF NOT EXISTS  stops (
     latitude DECIMAL(9,6),
     longitude DECIMAL(9,6),
     is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     FOREIGN KEY (school_id) REFERENCES schools(school_id) ON DELETE CASCADE,
     FOREIGN KEY (branch_id, school_id)
@@ -219,8 +219,8 @@ CREATE TABLE IF NOT EXISTS route_stops (
 
     estimated_time TIME,
 
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     -- Foreign Keys
     FOREIGN KEY (route_id)
@@ -260,8 +260,8 @@ CREATE TABLE IF NOT EXISTS students (
     grade VARCHAR(20),
     section VARCHAR(10),
     is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     FOREIGN KEY (school_id) REFERENCES schools(school_id) ON DELETE CASCADE,
     FOREIGN KEY (branch_id, school_id)
@@ -300,8 +300,8 @@ CREATE TABLE IF NOT EXISTS parents (
 
     is_active BOOLEAN DEFAULT TRUE,
 
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     -- Foreign Keys
     FOREIGN KEY (user_id)
@@ -330,8 +330,8 @@ CREATE TABLE IF NOT EXISTS student_parents (
 
     is_primary BOOLEAN DEFAULT FALSE,
 
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     -- Foreign Keys
     FOREIGN KEY (student_id)
@@ -368,8 +368,8 @@ CREATE TABLE IF NOT EXISTS trips (
     actual_start_time TIMESTAMP,
     actual_end_time TIMESTAMP,
 
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     FOREIGN KEY (route_id) REFERENCES routes(route_id) ON DELETE CASCADE,
     FOREIGN KEY (bus_id) REFERENCES buses(bus_id) ON DELETE SET NULL,
@@ -398,7 +398,7 @@ CREATE TABLE IF NOT EXISTS trip_live_status (
     heading DECIMAL(5,2),
     last_stop_id INT,
     last_stop_arrival_time TIMESTAMP,
-    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_updated TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     FOREIGN KEY (trip_id) REFERENCES trips(trip_id) ON DELETE CASCADE,
     FOREIGN KEY (school_id) REFERENCES schools(school_id) ON DELETE CASCADE,
@@ -433,8 +433,8 @@ CREATE TABLE IF NOT EXISTS student_route_assignments (
     
     is_active BOOLEAN DEFAULT TRUE,
 
-    assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     -- Composite Foreign Keys (Tenant-safe)
     FOREIGN KEY (student_id, branch_id, school_id)
@@ -487,7 +487,7 @@ CREATE TABLE IF NOT EXISTS student_attendance (
 
     stop_id INT,
 
-    marked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    marked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     marked_by_driver_id INT,
 
@@ -552,7 +552,7 @@ CREATE TABLE IF NOT EXISTS notification_logs (
     notification_status notification_status_enum NOT NULL DEFAULT 'PENDING',
     event_key VARCHAR(255),
     channel channel_enum,
-    sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    sent_at TIMESTAMPTZ DEFAULT NOW(),
 
     -- Tenant-safe FKs
     FOREIGN KEY (user_id)
@@ -612,7 +612,7 @@ CREATE TABLE IF NOT EXISTS gps_logs (
     accuracy DECIMAL(5,2),
     ignition_on BOOLEAN,
 
-    recorded_at TIMESTAMP NOT NULL,
+    recorded_at TIMESTAMPTZ NOT NULL,
 
     -- Tenant-safe FKs
     FOREIGN KEY (device_id, branch_id, school_id)
@@ -652,7 +652,7 @@ CREATE TABLE IF NOT EXISTS bus_device_assignments (
     bus_id INT NOT NULL,
     device_id INT NOT NULL,
 
-    assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    assigned_at TIMESTAMPTZ DEFAULT NOW(),
     unassigned_at TIMESTAMP,
 
     -- Tenant-safe FKs
@@ -708,7 +708,7 @@ CREATE TABLE IF NOT EXISTS student_leave_requests (
 
     status student_leave_request_status_enum DEFAULT 'PENDING',
 
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     -- Validations
     CHECK (end_date >= start_date),
@@ -746,9 +746,9 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
     token_id    BIGSERIAL PRIMARY KEY,
     user_id     BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
     token_hash  TEXT NOT NULL UNIQUE,
-    issued_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    expires_at  TIMESTAMP NOT NULL,
-    revoked_at  TIMESTAMP DEFAULT NULL,
+    issued_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    revoked_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     device_info VARCHAR(512) DEFAULT NULL
 );
 

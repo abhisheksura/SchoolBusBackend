@@ -17,7 +17,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import ENUM
 
 from app.core.db import Base
+from app.core.db.base import TZDateTime
 from app.core.enums import RoleName
+from app.core.utils import utcnow
 
 
 # -----------------------------------------------------------------------------
@@ -49,14 +51,15 @@ class User(Base):
         Boolean, nullable=False, default=True, server_default="true"
     )
     created_at: Mapped[datetime] = mapped_column(
-        nullable=False, server_default=func.now()
+        TZDateTime, nullable=False, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        nullable=False, server_default=func.now(), onupdate=func.now()
+        TZDateTime, nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
     # -------------------------------------------------------------------------
     # Relationships
+    # lazy="noload" — must use selectinload/joinedload explicitly in queries
     # -------------------------------------------------------------------------
     user_roles: Mapped[list["UserRole"]] = relationship(
         "UserRole",
@@ -97,10 +100,10 @@ class Role(Base):
         Boolean, nullable=False, default=True, server_default="true"
     )
     created_at: Mapped[datetime] = mapped_column(
-        nullable=False, server_default=func.now()
+        TZDateTime, nullable=False, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        nullable=False, server_default=func.now(), onupdate=func.now()
+        TZDateTime, nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
     # -------------------------------------------------------------------------
@@ -160,17 +163,16 @@ class UserRole(Base):
         Boolean, nullable=False, default=True, server_default="true"
     )
     assigned_at: Mapped[datetime] = mapped_column(
-        nullable=False, server_default=func.now()
+        TZDateTime, nullable=False, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        nullable=False, server_default=func.now(), onupdate=func.now()
+        TZDateTime, nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
     # -------------------------------------------------------------------------
     # Constraints — mirrors DB CHECK constraint exactly
     # -------------------------------------------------------------------------
     __table_args__ = (
-        # Composite FK mirrors the branches(branch_id, school_id) unique constraint
         ForeignKeyConstraint(
             ["branch_id", "school_id"],
             ["branches.branch_id", "branches.school_id"],
@@ -232,10 +234,14 @@ class RefreshToken(Base):
         Text, nullable=False, unique=True
     )
     issued_at: Mapped[datetime] = mapped_column(
-        nullable=False, server_default=func.now()
+        TZDateTime, nullable=False, server_default=func.now()
     )
-    expires_at: Mapped[datetime] = mapped_column(nullable=False)
-    revoked_at: Mapped[datetime | None] = mapped_column(nullable=True, default=None)
+    expires_at: Mapped[datetime] = mapped_column(
+        TZDateTime, nullable=False
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        TZDateTime, nullable=True, default=None
+    )
     device_info: Mapped[str | None] = mapped_column(
         String(512), nullable=True
     )
@@ -245,11 +251,7 @@ class RefreshToken(Base):
     # -------------------------------------------------------------------------
     __table_args__ = (
         Index("idx_refresh_tokens_user_id", "user_id"),
-        Index(
-            "idx_refresh_tokens_active",
-            "user_id",
-            "revoked_at",
-        ),
+        Index("idx_refresh_tokens_active", "user_id", "revoked_at"),
     )
 
     # -------------------------------------------------------------------------
@@ -268,8 +270,12 @@ class RefreshToken(Base):
 
     @property
     def is_expired(self) -> bool:
-        """Return True if the token has passed its expiry time."""
-        return datetime.utcnow() > self.expires_at
+        """
+        Return True if the token has passed its expiry time.
+        Both utcnow() and expires_at are timezone-aware (TIMESTAMPTZ) —
+        comparison is always correct regardless of server timezone.
+        """
+        return utcnow() > self.expires_at
 
     def __repr__(self) -> str:
         return (

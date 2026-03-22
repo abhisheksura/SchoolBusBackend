@@ -16,6 +16,13 @@ NAMING_CONVENTION: dict[str, str] = {
     "pk": "pk_%(table_name)s",
 }
 
+# -----------------------------------------------------------------------------
+# Timezone-aware timestamp type
+# Use this for ALL timestamp columns across every domain model.
+# Maps to TIMESTAMP WITH TIME ZONE (TIMESTAMPTZ) in PostgreSQL.
+# Always stores and returns UTC — safe across server timezones and DST.
+# -----------------------------------------------------------------------------
+TZDateTime = DateTime(timezone=True)
 
 # -----------------------------------------------------------------------------
 # Declarative Base
