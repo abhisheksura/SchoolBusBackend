@@ -59,17 +59,22 @@ class User(Base):
     # -------------------------------------------------------------------------
     # Relationships
     # lazy="noload" — must use selectinload/joinedload explicitly in queries
+    #
+    # cascade="save-update, merge" only — NO delete or delete-orphan.
+    # Users are soft-deleted (is_active = False), never hard-deleted via ORM.
+    # DB-level ON DELETE CASCADE handles physical cleanup if a raw SQL DELETE
+    # is ever run directly — that is a conscious DBA action, not app code.
     # -------------------------------------------------------------------------
     user_roles: Mapped[list["UserRole"]] = relationship(
         "UserRole",
         back_populates="user",
-        cascade="all, delete-orphan",
+        cascade="save-update, merge",
         lazy="noload",
     )
     refresh_tokens: Mapped[list["RefreshToken"]] = relationship(
         "RefreshToken",
         back_populates="user",
-        cascade="all, delete-orphan",
+        cascade="save-update, merge",
         lazy="noload",
     )
 
