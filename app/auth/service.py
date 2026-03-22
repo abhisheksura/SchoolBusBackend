@@ -15,6 +15,7 @@ from app.core.exceptions import (
     UnauthorizedError,
 )
 from app.core.utils import utcnow
+from app.core.security import (
     create_access_token,
     create_refresh_token,
     decode_refresh_token,
@@ -59,9 +60,9 @@ def _build_roles_payload(user_roles: list[UserRole]) -> list[dict]:
 
 def _compute_refresh_token_expiry() -> datetime:
     """
-    Compute the refresh token expiry datetime in UTC (timezone-naive).
-    Uses utcnow() from core.utils — safe replacement for datetime.utcnow().
-    Compatible with PostgreSQL TIMESTAMP WITHOUT TIME ZONE columns.
+    Compute the refresh token expiry datetime in UTC.
+    Uses utcnow() from core.utils — returns timezone-aware datetime.
+    Compatible with PostgreSQL TIMESTAMPTZ columns.
     """
     return utcnow() + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS)
 

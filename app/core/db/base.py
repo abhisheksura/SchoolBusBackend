@@ -1,5 +1,6 @@
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import MetaData
+from sqlalchemy.dialects.postgresql import TIMESTAMP
 
 
 # -----------------------------------------------------------------------------
@@ -19,10 +20,18 @@ NAMING_CONVENTION: dict[str, str] = {
 # -----------------------------------------------------------------------------
 # Timezone-aware timestamp type
 # Use this for ALL timestamp columns across every domain model.
-# Maps to TIMESTAMP WITH TIME ZONE (TIMESTAMPTZ) in PostgreSQL.
+# Maps directly to PostgreSQL TIMESTAMPTZ.
 # Always stores and returns UTC — safe across server timezones and DST.
+#
+# Using sqlalchemy.dialects.postgresql.TIMESTAMP(timezone=True) instead of
+# sqlalchemy.DateTime(timezone=True) — more explicit, avoids any type
+# resolution ambiguity during module load.
+#
+# Usage in models:
+#   created_at: Mapped[datetime] = mapped_column(TZDateTime, ...)
 # -----------------------------------------------------------------------------
-TZDateTime = DateTime(timezone=True)
+TZDateTime = TIMESTAMP(timezone=True)
+
 
 # -----------------------------------------------------------------------------
 # Declarative Base

@@ -16,8 +16,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import ENUM
 
-from app.core.db import Base
-from app.core.db.base import TZDateTime
+from app.core.db.base import Base, TZDateTime
 from app.core.enums import RoleName
 from app.core.utils import utcnow
 
