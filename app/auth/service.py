@@ -14,7 +14,7 @@ from app.core.exceptions import (
     TokenExpiredError,
     UnauthorizedError,
 )
-from app.core.security import (
+from app.core.utils import utcnow
     create_access_token,
     create_refresh_token,
     decode_refresh_token,
@@ -60,11 +60,10 @@ def _build_roles_payload(user_roles: list[UserRole]) -> list[dict]:
 def _compute_refresh_token_expiry() -> datetime:
     """
     Compute the refresh token expiry datetime in UTC (timezone-naive).
-    Uses utcnow() to match TIMESTAMP WITHOUT TIME ZONE DB columns.
+    Uses utcnow() from core.utils — safe replacement for datetime.utcnow().
+    Compatible with PostgreSQL TIMESTAMP WITHOUT TIME ZONE columns.
     """
-    return datetime.utcnow() + timedelta(
-        days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS
-    )
+    return utcnow() + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS)
 
 
 # -----------------------------------------------------------------------------
@@ -103,9 +102,9 @@ async def login(
         InvalidCredentialsError : if user not found, inactive, or password wrong
                                   (same error for all cases — never reveal which)
     """
-    # -- Step 1: Fetch user ---------------------------------------------------
+    # -- Step 1: Fetch user with roles in one efficient round-trip -------------
     try:
-        user = await auth_repo.get_user_by_user_name(db, user_name)
+        user = await auth_repo.get_user_with_roles_by_user_name(db, user_name)
     except Exception:
         # Raise generic error — never reveal whether the username exists
         raise InvalidCredentialsError()
@@ -119,9 +118,10 @@ async def login(
     if not user.is_active:
         raise InvalidCredentialsError()
 
-    # -- Step 4: Load active roles --------------------------------------------
-    user_roles = await auth_repo.get_all_active_roles_by_user_id(db, user.user_id)
-    roles_payload = _build_roles_payload(user_roles)
+    # -- Step 4: Build roles payload from already-loaded relationship ---------
+    # user.user_roles is already populated by selectinload in the repo call.
+    # No second DB query needed.
+    roles_payload = _build_roles_payload(user.user_roles)
 
     # -- Step 5: Create access token ------------------------------------------
     access_token = create_access_token(
@@ -228,15 +228,20 @@ async def refresh(
 async def logout(
     db: AsyncSession,
     raw_refresh_token: str,
+    user_id: int,
 ) -> None:
     """
     Revoke a single refresh token (logout current device/session).
-    Silently succeeds if the token is not found — idempotent by design.
-    Client can always safely call logout regardless of token state.
+
+    Verifies the token belongs to the requesting user before revoking.
+    Silently succeeds if the token is not found or does not belong to
+    this user — idempotent by design, client can always safely call logout.
 
     Args:
         db                : active async database session
         raw_refresh_token : raw JWT refresh token to revoke
+        user_id           : user_id from the JWT access token —
+                            used to verify token ownership before revoking
 
     Returns:
         None
@@ -244,7 +249,16 @@ async def logout(
     token_hash = _hash_token(raw_refresh_token)
 
     try:
+        token = await auth_repo.get_refresh_token_by_token_hash(db, token_hash)
+
+        # Ownership check — only revoke if the token belongs to this user.
+        # Silently ignore if it belongs to someone else rather than raising
+        # an error — avoids leaking whether the token exists for another user.
+        if token.user_id != user_id:
+            return
+
         await auth_repo.revoke_refresh_token_by_token_hash(db, token_hash)
+
     except InvalidTokenError:
         # Token not found — treat as already logged out, no error
         pass
@@ -276,6 +290,8 @@ async def get_me(
 ) -> MeResponse:
     """
     Fetch the authenticated user's profile along with their active roles.
+    Uses get_user_with_roles_by_user_id — loads user + roles in one
+    efficient two-query round-trip (select user + selectinload roles).
 
     Args:
         db      : active async database session
@@ -287,8 +303,7 @@ async def get_me(
     Raises:
         UserNotFoundError : if no user exists with the given user_id
     """
-    user = await auth_repo.get_user_by_user_id(db, user_id)
-    user_roles = await auth_repo.get_all_active_roles_by_user_id(db, user_id)
+    user = await auth_repo.get_user_with_roles_by_user_id(db, user_id)
 
     return MeResponse(
         user_id=user.user_id,
@@ -307,6 +322,6 @@ async def get_me(
                 is_active=role.is_active,
                 assigned_at=role.assigned_at,
             )
-            for role in user_roles
+            for role in user.user_roles
         ],
     )

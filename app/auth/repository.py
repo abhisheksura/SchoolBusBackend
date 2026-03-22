@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import select, update, func
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.models import RefreshToken, Role, User, UserRole
@@ -8,6 +9,7 @@ from app.core.exceptions import (
     InvalidTokenError,
     UserNotFoundError,
 )
+from app.core.utils import utcnow
 
 
 # =============================================================================
@@ -81,6 +83,72 @@ async def get_user_by_email_or_none(
     return result.scalar_one_or_none()
 
 
+async def get_user_with_roles_by_user_id(
+    db: AsyncSession,
+    user_id: int,
+) -> User:
+    """
+    Fetch a user by primary key with their active user_roles eagerly loaded.
+    Use this when you need to access user.user_roles in the same request
+    without a second DB round-trip (e.g. get_me, admin views).
+
+    Uses selectinload — issues a second efficient IN query for roles
+    rather than a JOIN, avoiding duplicate row problems on one-to-many.
+
+    Args:
+        db      : active async database session
+        user_id : primary key of the user
+
+    Returns:
+        User ORM instance with user_roles populated
+
+    Raises:
+        UserNotFoundError : if no user exists with the given user_id
+    """
+    result = await db.execute(
+        select(User)
+        .options(
+            selectinload(User.user_roles.and_(UserRole.is_active == True))
+        )
+        .where(User.user_id == user_id)
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        raise UserNotFoundError(identifier=user_id)
+    return user
+
+
+async def get_user_with_roles_by_user_name(
+    db: AsyncSession,
+    user_name: str,
+) -> User:
+    """
+    Fetch a user by username with their active user_roles eagerly loaded.
+    Use when you need user + roles together in one round-trip.
+
+    Args:
+        db        : active async database session
+        user_name : unique username to look up
+
+    Returns:
+        User ORM instance with user_roles populated
+
+    Raises:
+        UserNotFoundError : if no user exists with the given username
+    """
+    result = await db.execute(
+        select(User)
+        .options(
+            selectinload(User.user_roles.and_(UserRole.is_active == True))
+        )
+        .where(User.user_name == user_name)
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        raise UserNotFoundError(identifier=user_name)
+    return user
+
+
 async def get_user_by_phone_or_none(
     db: AsyncSession,
     phone: str,
@@ -141,6 +209,7 @@ async def update_user_password_by_user_id(
 ) -> User:
     """
     Update the password hash for a user.
+    Uses PostgreSQL RETURNING clause — single round-trip, no stale data risk.
 
     Args:
         db                : active async database session
@@ -148,21 +217,25 @@ async def update_user_password_by_user_id(
         new_password_hash : bcrypt hash of the new password
 
     Returns:
-        Updated User ORM instance
+        Updated User ORM instance — exact post-update DB state
 
     Raises:
         UserNotFoundError : if no user exists with the given user_id
     """
-    await db.execute(
+    result = await db.execute(
         update(User)
         .where(User.user_id == user_id)
         .values(
             password_hash=new_password_hash,
             updated_at=func.now(),
         )
+        .returning(User)
     )
     await db.flush()
-    return await get_user_by_user_id(db, user_id)
+    user = result.scalar_one_or_none()
+    if not user:
+        raise UserNotFoundError(identifier=user_id)
+    return user
 
 
 async def deactivate_user_by_user_id(
@@ -172,24 +245,29 @@ async def deactivate_user_by_user_id(
     """
     Soft-delete a user by setting is_active = False.
     Never hard-deletes — preserves all related records.
+    Uses PostgreSQL RETURNING clause — single round-trip, no stale data risk.
 
     Args:
         db      : active async database session
         user_id : primary key of the user to deactivate
 
     Returns:
-        Updated User ORM instance
+        Updated User ORM instance — exact post-update DB state
 
     Raises:
         UserNotFoundError : if no user exists with the given user_id
     """
-    await db.execute(
+    result = await db.execute(
         update(User)
         .where(User.user_id == user_id)
         .values(is_active=False, updated_at=func.now())
+        .returning(User)
     )
     await db.flush()
-    return await get_user_by_user_id(db, user_id)
+    user = result.scalar_one_or_none()
+    if not user:
+        raise UserNotFoundError(identifier=user_id)
+    return user
 
 
 # =============================================================================
@@ -291,24 +369,29 @@ async def revoke_user_role_by_user_role_id(
 ) -> UserRole:
     """
     Deactivate a role assignment by setting is_active = False.
+    Uses PostgreSQL RETURNING clause — single round-trip, no stale data risk.
 
     Args:
         db           : active async database session
         user_role_id : primary key of the user_role record to revoke
 
     Returns:
-        Updated UserRole ORM instance
+        Updated UserRole ORM instance — exact post-update DB state
 
     Raises:
         UserNotFoundError : if no user_role exists with the given id
     """
-    await db.execute(
+    result = await db.execute(
         update(UserRole)
         .where(UserRole.user_role_id == user_role_id)
         .values(is_active=False, updated_at=func.now())
+        .returning(UserRole)
     )
     await db.flush()
-    return await get_user_role_by_user_role_id(db, user_role_id)
+    user_role = result.scalar_one_or_none()
+    if not user_role:
+        raise UserNotFoundError(identifier=user_role_id)
+    return user_role
 
 
 # =============================================================================
@@ -403,25 +486,29 @@ async def revoke_refresh_token_by_token_hash(
 ) -> RefreshToken:
     """
     Revoke a single refresh token by setting revoked_at to now (UTC).
+    Uses PostgreSQL RETURNING clause — single round-trip, no stale data risk.
 
     Args:
         db         : active async database session
         token_hash : SHA-256 hash of the raw JWT refresh token
 
     Returns:
-        Updated RefreshToken ORM instance
+        Updated RefreshToken ORM instance — exact post-update DB state
 
     Raises:
         InvalidTokenError : if no token record matches the given hash
     """
-    now = datetime.utcnow()
-    await db.execute(
+    result = await db.execute(
         update(RefreshToken)
         .where(RefreshToken.token_hash == token_hash)
-        .values(revoked_at=now)
+        .values(revoked_at=utcnow())
+        .returning(RefreshToken)
     )
     await db.flush()
-    return await get_refresh_token_by_token_hash(db, token_hash)
+    token = result.scalar_one_or_none()
+    if not token:
+        raise InvalidTokenError(detail="Refresh token not recognised.")
+    return token
 
 
 async def revoke_all_refresh_tokens_by_user_id(
@@ -430,7 +517,8 @@ async def revoke_all_refresh_tokens_by_user_id(
 ) -> int:
     """
     Revoke all active refresh tokens for a user (logout all devices).
-    Sets revoked_at = now on every non-revoked token for this user.
+    Uses PostgreSQL RETURNING clause — counts revoked rows in one round-trip,
+    eliminating the previous SELECT + UPDATE two-query pattern.
 
     Args:
         db      : active async database session
@@ -439,20 +527,14 @@ async def revoke_all_refresh_tokens_by_user_id(
     Returns:
         Count of tokens that were revoked
     """
-    # Fetch active tokens first to get the count
-    active_tokens = await get_all_active_refresh_tokens_by_user_id(db, user_id)
-    count = len(active_tokens)
-
-    if count > 0:
-        now = datetime.utcnow()
-        await db.execute(
-            update(RefreshToken)
-            .where(
-                RefreshToken.user_id == user_id,
-                RefreshToken.revoked_at.is_(None),
-            )
-            .values(revoked_at=now)
+    result = await db.execute(
+        update(RefreshToken)
+        .where(
+            RefreshToken.user_id == user_id,
+            RefreshToken.revoked_at.is_(None),
         )
-        await db.flush()
-
-    return count
+        .values(revoked_at=utcnow())
+        .returning(RefreshToken.token_id)
+    )
+    await db.flush()
+    return len(result.scalars().all())

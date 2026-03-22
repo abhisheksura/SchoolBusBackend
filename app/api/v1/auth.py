@@ -57,7 +57,11 @@ async def login(
     summary="Refresh access token",
     description=(
         "Exchange a valid refresh token for a new access token. "
-        "The same refresh token is returned (no rotation for now)."
+        "The same refresh token is returned — token rotation is not yet implemented. "
+        "When rotation is added, this endpoint will issue a new refresh token "
+        "and revoke the old one on every call. "
+        "Frontend clients should be built to handle a new refresh token being "
+        "returned here, even if it is not changing today."
     ),
 )
 async def refresh_token(
@@ -80,7 +84,9 @@ async def refresh_token(
     summary="Logout current session",
     description=(
         "Revoke the provided refresh token. "
-        "Idempotent — safe to call even if the token is already revoked or expired."
+        "Only revokes tokens that belong to the authenticated user — "
+        "silently ignores tokens that are not found or belong to another user. "
+        "Idempotent — safe to call multiple times."
     ),
 )
 async def logout(
@@ -88,10 +94,14 @@ async def logout(
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = AnyAuthenticated,
 ) -> None:
-    """Revoke a single refresh token (logout current device/session)."""
+    """
+    Revoke a single refresh token (logout current device/session).
+    Ownership is verified — only revokes tokens belonging to the current user.
+    """
     await auth_service.logout(
         db=db,
         raw_refresh_token=payload.refresh_token,
+        user_id=current_user.user_id,
     )
 
 
