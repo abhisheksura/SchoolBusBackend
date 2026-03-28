@@ -6,8 +6,7 @@ from fastapi import APIRouter
 # -----------------------------------------------------------------------------
 from app.api.v1.auth           import router as auth_router
 from app.api.v1.schools        import router as schools_router
-# from app.branches.router     import router as branches_router
-# from app.fleet.router        import router as fleet_router
+from app.api.v1.fleet          import router as fleet_router
 # from app.routes.router       import router as routes_router
 # from app.trips.router        import router as trips_router
 # from app.students.router     import router as students_router
@@ -22,8 +21,7 @@ api_router = APIRouter(prefix="/api/v1")
 # -----------------------------------------------------------------------------
 api_router.include_router(auth_router,          prefix="/auth",          tags=["Auth"])
 api_router.include_router(schools_router,       prefix="/schools",       tags=["Schools"])
-# api_router.include_router(branches_router,      prefix="/branches",      tags=["Branches"])
-# api_router.include_router(fleet_router,         prefix="/fleet",         tags=["Fleet"])
+api_router.include_router(fleet_router,         prefix="/fleet",         tags=["Fleet"])
 # api_router.include_router(routes_router,        prefix="/routes",        tags=["Routes"])
 # api_router.include_router(trips_router,         prefix="/trips",         tags=["Trips"])
 # api_router.include_router(students_router,      prefix="/students",      tags=["Students"])
