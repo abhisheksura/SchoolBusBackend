@@ -434,7 +434,7 @@ CREATE TABLE IF NOT EXISTS student_parents (
     id           SERIAL      PRIMARY KEY,
     student_id   INT         NOT NULL REFERENCES students(student_id) ON DELETE CASCADE,
     parent_id    INT         NOT NULL REFERENCES parents(parent_id)   ON DELETE CASCADE,
-    relationship VARCHAR(50),
+    relationship_type VARCHAR(50),
     is_primary   BOOLEAN     NOT NULL DEFAULT FALSE,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
