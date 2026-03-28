@@ -325,7 +325,7 @@ CREATE TABLE IF NOT EXISTS student_parents (
     student_id INT NOT NULL,
     parent_id INT NOT NULL,
 
-    relationship VARCHAR(50) NOT NULL, 
+    relationship_type VARCHAR(50) NOT NULL, 
     -- e.g., FATHER, MOTHER, GUARDIAN
 
     is_primary BOOLEAN DEFAULT FALSE,
