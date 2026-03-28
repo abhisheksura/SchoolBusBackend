@@ -137,7 +137,7 @@ class StudentParent(Base):
     student_parent_id: Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
     student_id       : Mapped[int]      = mapped_column(Integer, ForeignKey("students.student_id", ondelete="RESTRICT"), nullable=False)
     parent_id        : Mapped[int]      = mapped_column(Integer, ForeignKey("parents.parent_id", ondelete="RESTRICT"), nullable=False)
-    relationship     : Mapped[str]      = mapped_column(String(50), nullable=False)
+    relationship_type: Mapped[str]      = mapped_column(String(50), nullable=False)
     is_primary       : Mapped[bool]     = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     created_at       : Mapped[datetime] = mapped_column(TZDateTime, nullable=False, server_default=func.now())
     updated_at       : Mapped[datetime] = mapped_column(TZDateTime, nullable=False, server_default=func.now(), onupdate=func.now())
