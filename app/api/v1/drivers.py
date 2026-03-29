@@ -8,7 +8,7 @@ from app.core.db import get_db
 from app.core.enums import RoleName
 from app.api.v1.dependencies import AnyAuthenticated, CurrentUser, require_roles
 
-router = APIRouter()
+router = APIRouter(prefix = "/drivers")
 
 DriverAdminRequired = Depends(
     require_roles(RoleName.SUPER_ADMIN, RoleName.SCHOOL_ADMIN, RoleName.BRANCH_ADMIN)
