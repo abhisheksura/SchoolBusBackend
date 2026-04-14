@@ -25,8 +25,12 @@ router = APIRouter()
     status_code=status.HTTP_200_OK,
     summary="Login",
     description=(
-        "Authenticate with username and password. "
-        "Returns a short-lived access token and a long-lived refresh token."
+        "Authenticate with username, password, platform, and role. "
+        "The user must hold the exact declared role. "
+        "Platform + role combinations are validated: "
+        "'web' → SUPER_ADMIN | SCHOOL_ADMIN | BRANCH_ADMIN. "
+        "'mobile' → DRIVER | STUDENT. "
+        "Correct credentials with a mismatched or undeclared role returns 401."
     ),
 )
 async def login(
@@ -36,13 +40,16 @@ async def login(
 ) -> TokenResponse:
     """
     Authenticate a user and issue JWT tokens.
-    device_info falls back to the User-Agent header if not provided in body.
+    platform + role validated by Pydantic before hitting the DB.
+    device_info falls back to the User-Agent header if not provided.
     """
     device_info = payload.device_info or request.headers.get("user-agent")
     return await auth_service.login(
         db=db,
         user_name=payload.user_name,
         password=payload.password,
+        platform=payload.platform,
+        role=payload.role,
         device_info=device_info,
     )
 

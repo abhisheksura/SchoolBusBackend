@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 from app.core.config import settings
 from app.core.enums import RoleName
@@ -49,12 +49,38 @@ DeviceInfoField = Annotated[
 # =============================================================================
 
 class LoginRequest(BaseModel):
-    """Payload for POST /auth/login."""
+    """
+    Payload for POST /auth/login.
+
+    Both `platform` and `role` must be provided. The backend validates:
+        1. The declared role is permitted on the declared platform
+        2. The user actually holds that exact role (active)
+
+    Platform → allowed roles:
+        "web"    → SUPER_ADMIN, SCHOOL_ADMIN, BRANCH_ADMIN
+        "mobile" → DRIVER, STUDENT
+
+    Examples of what gets rejected even with correct credentials:
+        - SUPER_ADMIN logging in with role="SCHOOL_ADMIN"
+        - DRIVER logging in on platform="web"
+        - SCHOOL_ADMIN logging in with role="SUPER_ADMIN"
+    """
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    user_name: UserNameField
-    password: PasswordField
+    user_name  : UserNameField
+    password   : PasswordField
+    platform   : str      = Field(
+        default="web",
+        pattern="^(web|mobile)$",
+        description="Login platform — 'web' (admin dashboard) or 'mobile' (driver/student app).",
+    )
+    role       : RoleName = Field(
+        description=(
+            "The exact role the user is logging in as. "
+            "Must match one of the user's active roles AND be permitted on the given platform."
+        ),
+    )
     device_info: DeviceInfoField = None
 
     @field_validator("user_name", mode="before")
@@ -62,6 +88,21 @@ class LoginRequest(BaseModel):
     def lowercase_user_name(cls, v: str) -> str:
         """Normalize username to lowercase before validation."""
         return v.lower() if isinstance(v, str) else v
+
+    @model_validator(mode="after")
+    def role_allowed_on_platform(self) -> "LoginRequest":
+        """
+        Cross-field check: reject at Pydantic layer if the declared role is not
+        permitted on the declared platform. This gives a clean 422 before the
+        request touches the DB.
+        """
+        from app.core.enums import PLATFORM_ROLES
+        allowed = PLATFORM_ROLES.get(self.platform, frozenset())
+        if self.role not in allowed:
+            raise ValueError(
+                f"Role '{self.role.value}' is not permitted on platform '{self.platform}'."
+            )
+        return self
 
 
 class RefreshTokenRequest(BaseModel):

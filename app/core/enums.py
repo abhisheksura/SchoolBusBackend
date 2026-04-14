@@ -116,7 +116,12 @@ LEAVE_STATUS_TRANSITIONS: dict[LeaveRequestStatus, set[LeaveRequestStatus]] = {
     LeaveRequestStatus.REJECTED: set(),  # terminal
 }
 
-# Roles that require branch-level scoping
+# Roles permitted per login platform
+# Used in auth/service.py login() to reject cross-platform logins
+PLATFORM_ROLES: dict[str, frozenset["RoleName"]] = {
+    "web":    frozenset({RoleName.SUPER_ADMIN, RoleName.SCHOOL_ADMIN, RoleName.BRANCH_ADMIN}),
+    "mobile": frozenset({RoleName.DRIVER, RoleName.STUDENT}),
+}
 BRANCH_SCOPED_ROLES: frozenset[RoleName] = frozenset({
     RoleName.BRANCH_ADMIN,
     RoleName.DRIVER,

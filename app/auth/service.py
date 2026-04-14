@@ -14,6 +14,7 @@ from app.core.exceptions import (
     TokenExpiredError,
     UnauthorizedError,
 )
+from app.core.enums import PLATFORM_ROLES, RoleName
 from app.core.utils import utcnow
 from app.core.security import (
     create_access_token,
@@ -75,6 +76,8 @@ async def login(
     db: AsyncSession,
     user_name: str,
     password: str,
+    platform: str,
+    role: RoleName,
     device_info: str | None = None,
 ) -> TokenResponse:
     """
@@ -84,30 +87,39 @@ async def login(
         1. Fetch user by username
         2. Verify password
         3. Check user is active
-        4. Load active roles
-        5. Create JWT access token
-        6. Create JWT refresh token
-        7. Hash raw refresh token and persist to DB
-        8. Return TokenResponse
+        4. Check user holds the exact declared role (active)
+        5. Build roles payload — embed only the declared role's assignments
+        6. Create JWT access token
+        7. Create JWT refresh token
+        8. Hash raw refresh token and persist to DB
+        9. Return TokenResponse
+
+    The platform + role combination is pre-validated by LoginRequest at the
+    Pydantic layer (422 if role is not permitted on platform). This step only
+    checks whether the user actually holds that role in the DB.
+
+    All credential errors raise InvalidCredentialsError — never reveal
+    which specific check failed.
 
     Args:
         db          : active async database session
         user_name   : username submitted in the login request
         password    : plain-text password submitted in the login request
-        device_info : optional user-agent or device label
+        platform    : "web" or "mobile"
+        role        : the exact RoleName the user is logging in as
+        device_info : optional device label or user-agent string
 
     Returns:
         TokenResponse with access_token, refresh_token, token_type, expires_in
 
     Raises:
-        InvalidCredentialsError : if user not found, inactive, or password wrong
-                                  (same error for all cases — never reveal which)
+        InvalidCredentialsError : if user not found, inactive, password wrong,
+                                  or user does not hold the declared role
     """
     # -- Step 1: Fetch user with roles in one efficient round-trip -------------
     try:
         user = await auth_repo.get_user_with_roles_by_user_name(db, user_name)
     except Exception:
-        # Raise generic error — never reveal whether the username exists
         raise InvalidCredentialsError()
 
     # -- Step 2: Verify password ----------------------------------------------
@@ -119,22 +131,37 @@ async def login(
     if not user.is_active:
         raise InvalidCredentialsError()
 
-    # -- Step 4: Build roles payload from already-loaded relationship ---------
-    # user.user_roles is already populated by selectinload in the repo call.
-    # No second DB query needed.
-    roles_payload = _build_roles_payload(user.user_roles)
+    # -- Step 4: Exact role check ---------------------------------------------
+    # The user must hold the declared role (active). This catches:
+    #   - SUPER_ADMIN logging in as SCHOOL_ADMIN (doesn't hold that role)
+    #   - SCHOOL_ADMIN logging in as SUPER_ADMIN (doesn't hold that role)
+    #   - Any user claiming a role they were never assigned
+    matching_roles = [
+        r for r in user.user_roles
+        if r.is_active and RoleName(r.role_name) == role
+    ]
+    if not matching_roles:
+        raise InvalidCredentialsError(
+            detail="This account does not have the specified role."
+        )
 
-    # -- Step 5: Create access token ------------------------------------------
+    # -- Step 5: Build roles payload — only the declared role's assignments ---
+    # A user with multiple roles (e.g. SCHOOL_ADMIN in two schools) gets all
+    # assignments for the declared role embedded in the token. Assignments for
+    # other roles are excluded.
+    roles_payload = _build_roles_payload(matching_roles)
+
+    # -- Step 6: Create access token ------------------------------------------
     access_token = create_access_token(
         user_id=user.user_id,
         user_name=user.user_name,
         roles=roles_payload,
     )
 
-    # -- Step 6: Create refresh token -----------------------------------------
+    # -- Step 7: Create refresh token -----------------------------------------
     raw_refresh_token = create_refresh_token(user_id=user.user_id)
 
-    # -- Step 7: Hash and persist refresh token -------------------------------
+    # -- Step 8: Hash and persist refresh token -------------------------------
     token_hash = _hash_token(raw_refresh_token)
     expires_at = _compute_refresh_token_expiry()
 
@@ -146,7 +173,7 @@ async def login(
         device_info=device_info,
     )
 
-    # -- Step 8: Return token response ----------------------------------------
+    # -- Step 9: Return token response ----------------------------------------
     return TokenResponse(
         access_token=access_token,
         refresh_token=raw_refresh_token,

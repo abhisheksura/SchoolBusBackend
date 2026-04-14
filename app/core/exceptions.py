@@ -49,8 +49,8 @@ class UnauthorizedError(AppException):
 
 
 class InvalidCredentialsError(UnauthorizedError):
-    def __init__(self):
-        super().__init__(detail="Invalid username or password.")
+    def __init__(self, detail: str = "Invalid username or password."):
+        super().__init__(detail=detail)
 
 
 class InvalidTokenError(UnauthorizedError):
