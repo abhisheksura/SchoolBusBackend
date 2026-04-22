@@ -5,13 +5,14 @@
 ---
 
 ## 📌 Project Overview
-
-**Project:** School Bus Tracker — Multi-tenant REST API
-**Engine:** PostgreSQL (multi-tenant via `school_id` + `branch_id` composite FKs)
-**Framework:** FastAPI (async-first)
-**ORM:** SQLAlchemy (async) + asyncpg driver
-**Auth:** JWT (access + refresh tokens), refresh tokens stored in PostgreSQL
-**Schema Reference:** `DatabaseSchema.md` (already discussed and understood in full)
+|   |   |
+|---|---|
+| **Project:** | School Bus Tracker — Multi-tenant REST API |
+| **Engine:** | PostgreSQL (multi-tenant via `school_id` + `branch_id` composite FKs) |
+| **Framework:** | FastAPI (async-first) |
+| **ORM:** | SQLAlchemy (async) + asyncpg driver |
+| **Auth:** | JWT (access + refresh tokens), refresh tokens stored in PostgreSQL |
+| **Schema Reference:** | `DatabaseSchema.md` (already discussed and understood in full) |
 
 ---
 
@@ -34,6 +35,7 @@
 | Queries | SQLAlchemy Core-style `select()` — never `session.query()` (legacy sync API) |
 | Background tasks | FastAPI `BackgroundTasks` or `asyncio` — no threading |
 | Data access pattern | Repository pattern — dedicated `repository.py` per domain |
+| Multi-tenancy | PostgreSQL RLS + ORM auto-filter + JWT-derived scope — three-layer isolation |
 
 ---
 
@@ -44,12 +46,15 @@ app/
 │   ├── config.py                ✅ Done
 │   ├── enums.py                 ✅ Done
 │   ├── exceptions.py            ✅ Done
+|   ├── schemas.py               ✅ Done
 │   ├── security.py              ✅ Done
+│   ├── utils.py                 ✅ Done  ← utcnow()
 │   └── db/
 │       ├── __init__.py          ✅ Done
 │       ├── base.py              ✅ Done
 │       ├── engine.py            ✅ Done
-│       └── session.py           ✅ Done
+│       ├── session.py           ✅ Done  ← get_db() for auth routes ONLY
+│       └── tenant.py            ✅ Done  ← TenantContext, get_tenant_db, build_tenant_dep, ORM filter
 │
 ├── api/                         # FastAPI-specific layer
 │   └── v1/
@@ -58,38 +63,47 @@ app/
 │       ├── router.py            ✅ Done  ← aggregates all domain routers as api_router
 │       ├── auth.py              ✅ Done  ← auth HTTP routes
 │       ├── schools.py           ⏳ Pending
-│       ├── branches.py          ⏳ Pending
 │       ├── fleet.py             ⏳ Pending
+│       ├── drivers.py           ✅ Done
+│       ├── gps.py               ✅ Done
 │       ├── routes.py            ⏳ Pending
 │       ├── trips.py             ⏳ Pending
 │       ├── students.py          ⏳ Pending
+│       ├── assignments.py       ✅ Done
 │       ├── attendance.py        ⏳ Pending
 │       └── notifications.py     ⏳ Pending
 │
 ├── auth/                        ✅ Done
 │   ├── __init__.py
 │   ├── models.py                ← User, Role, UserRole, RefreshToken ORM models
-│   ├── schemas.py               ← Pydantic request/response models
+│   ├── schemas.py               ← LoginRequest (platform+role fields), TokenResponse, MeResponse
 │   ├── repository.py            ← all auth DB queries
-│   └── service.py               ← login, refresh, logout business logic
+│   └── service.py               ← login() validates platform+role against PLATFORM_ROLES
 │
-├── schools/                     ⏳ Pending
+├── schools/                     ✅ Done
 │   ├── __init__.py
-│   ├── models.py
+│   ├── models.py                ← School, Branch
 │   ├── schemas.py
 │   ├── repository.py
 │   └── service.py
 │
-├── branches/                    ⏳ Pending
+├── fleet/                       ✅ Done
 │   ├── __init__.py
-│   ├── models.py
+│   ├── models.py                ← Bus
 │   ├── schemas.py
 │   ├── repository.py
 │   └── service.py
 │
-├── fleet/                       ⏳ Pending
+├── drivers/                     ✅ Done  ← split out from fleet
 │   ├── __init__.py
-│   ├── models.py                ← Bus, Driver, GPSDevice, BusDeviceAssignment
+│   ├── models.py                ← Driver
+│   ├── schemas.py
+│   ├── repository.py
+│   └── service.py
+│
+├── gps/                         ✅ Done  ← split out from fleet
+│   ├── __init__.py
+│   ├── models.py                ← GPSDevice, BusDeviceAssignment
 │   ├── schemas.py
 │   ├── repository.py
 │   └── service.py
@@ -103,7 +117,7 @@ app/
 │
 ├── trips/                       ⏳ Pending
 │   ├── __init__.py
-│   ├── models.py                ← Trip, TripLiveStatus, GPSLog
+│   ├── models.py                ← Trip, TripLiveStatus
 │   ├── schemas.py
 │   ├── repository.py
 │   └── service.py
@@ -111,6 +125,13 @@ app/
 ├── students/                    ⏳ Pending
 │   ├── __init__.py
 │   ├── models.py                ← Student, Parent, StudentParent, StudentLeaveRequest
+│   ├── schemas.py
+│   ├── repository.py
+│   └── service.py
+│
+├── assignments/                 ✅ Done  ← StudentRouteAssignment ONLY
+│   ├── __init__.py
+│   ├── models.py
 │   ├── schemas.py
 │   ├── repository.py
 │   └── service.py
@@ -130,6 +151,10 @@ app/
 │   └── service.py
 │
 └── main.py                      ✅ Done
+
+alembic/
+└── versions/
+    └── rls_policies.py          ✅ Done  ← RLS for all 20+ tables + partial unique indexes
 ```
 
 ---
@@ -196,14 +221,28 @@ from app.students.schemas import StudentResponse
 - Always use `status_code` explicitly on every route decorator
 
 ```python
-# correct
-@router.post("/", response_model=StudentResponse, status_code=status.HTTP_201_CREATED)
-async def create_student(
-    payload: StudentCreate,
+# Non-auth route — CORRECT: uses build_tenant_dep for RLS
+from app.core.db.tenant import build_tenant_dep
+from app.api.v1.dependencies import AnyAuthenticated, require_roles
+ 
+TenantDB = build_tenant_dep(AnyAuthenticated)
+ 
+@router.get("/buses/", response_model=PaginatedBusResponse, status_code=status.HTTP_200_OK)
+async def list_buses(
+    school_id: int = Query(...),
+    branch_id: int = Query(...),
+    db: AsyncSession = TenantDB,
+    current_user: CurrentUser = AnyAuthenticated,
+) -> PaginatedBusResponse:
+    return await fleet_service.get_all_buses(db, current_user, school_id, branch_id)
+ 
+# Auth route — CORRECT: uses plain get_db (no tenant context yet)
+@router.post("/login", response_model=TokenResponse, status_code=status.HTTP_200_OK)
+async def login(
+    payload: LoginRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: CurrentUser = Depends(require_roles(RoleName.BRANCH_ADMIN)),
-) -> StudentResponse:
-    return await student_service.create_student(db, payload, current_user)
+) -> TokenResponse:
+    return await auth_service.login(db, payload.user_name, payload.password, payload.platform, payload.role)
 ```
 
 ### Repository Conventions
@@ -231,55 +270,58 @@ async def get_all_refresh_tokens_by_user_id(db, user_id): ...
 async def get_active_device_assignment_by_bus_id(db, bus_id): ...
 ```
 
-Full example:
+### Multi-Tenant Repository Pattern (CRITICAL)
+All list/lookup repository functions that scope by tenant follow this pattern:
+ 
 ```python
-# correct — repository is pure DB access with fully qualified names
-async def get_student_by_student_id(db: AsyncSession, student_id: int) -> Student:
-    result = await db.execute(
-        select(Student).where(Student.student_id == student_id)
-    )
-    student = result.scalar_one_or_none()
-    if not student:
-        raise StudentNotFoundError(identifier=student_id)
-    return student
-
-async def get_all_students_by_branch(
+async def get_all_buses(
     db: AsyncSession,
-    school_id: int,
-    branch_id: int,
+    school_id: int | None,              # None = SUPER_ADMIN (no school filter)
+    branch_id: int | None,              # None = SUPER_ADMIN or SCHOOL_ADMIN
+    accessible_branch_ids: list[int] | None,  # None = no filter, [] = no access
     limit: int,
     offset: int,
-) -> tuple[list[Student], int]:
-    query = select(Student).where(
-        Student.school_id == school_id,
-        Student.branch_id == branch_id,
-        Student.is_active == True,
-    )
+    active_only: bool = True,
+) -> tuple[list[Bus], int]:
+    query = select(Bus)
+    if school_id is not None:
+        query = query.where(Bus.school_id == school_id)
+    # 🔐 Branch-level security filter
+    if accessible_branch_ids is not None:
+        query = query.where(Bus.branch_id.in_(accessible_branch_ids))
+    elif branch_id is not None:
+        query = query.where(Bus.branch_id == branch_id)
+    if active_only:
+        query = query.where(Bus.is_active == True)
     total = await db.scalar(select(func.count()).select_from(query.subquery()))
-    result = await db.execute(query.limit(limit).offset(offset))
-    return result.scalars().all(), total
+    result = await db.execute(query.order_by(Bus.bus_number).limit(limit).offset(offset))
+    return list(result.scalars().all()), total or 0
 ```
+ 
+Tenant context values come from `current_user` in the service layer — **never from client request body**.
+ 
 
 ### Service Conventions
 - Service functions always take `db: AsyncSession` as first argument
+- Services accept **primitives only** — no `CurrentUser` objects, no HTTP objects
 - Services call repository functions — never write raw queries in service
-- Services call `await session.flush()` — never `await session.commit()` (handled by `get_db`)
-- All business logic, validation, and orchestration lives here
+- All business logic, validation, orchestration, and scope checks live here
+- **Scope check BEFORE DB hit** — never fetch a row then reject based on tenant
+
 
 ```python
-# correct — service orchestrates, repository fetches with fully qualified names
-async def assign_student_to_route(
+async def get_bus(
     db: AsyncSession,
-    student_id: int,
-    route_id: int,
-    current_user: CurrentUser,
-) -> StudentRouteAssignment:
-    student = await student_repo.get_student_by_student_id(db, student_id)
-    route = await route_repo.get_route_by_route_id(db, route_id)
-    existing = await attendance_repo.get_assignment_by_student_and_route_or_none(db, student_id, route_id)
-    if existing:
-        raise StudentAlreadyAssignedError()
-    return await attendance_repo.create_student_route_assignment(db, student_id, route_id)
+    bus_id: int,
+    school_id: int | None,
+    branch_id: int | None,
+    accessible_branch_ids: list[int] | None,
+) -> BusResponse:
+    # Scope check first — no DB hit if user has no access
+    if accessible_branch_ids is not None and (branch_id is None or branch_id not in accessible_branch_ids):
+        raise BusNotFoundError(identifier=bus_id)  # 404, not 403 — don't reveal existence
+    bus = await fleet_repo.get_bus_by_bus_id(db, bus_id, school_id, branch_id)
+    return BusResponse.model_validate(bus)
 ```
 
 ### Schema Conventions
@@ -287,30 +329,136 @@ async def assign_student_to_route(
 - `Response` schemas always have `model_config = ConfigDict(from_attributes=True)`
 - Never expose: `password_hash`, internal FKs not needed by client
 - Timestamps (`created_at`, `updated_at`) always included in `Response` schemas
+- `PATCH` schemas use `exclude_unset=True` — never `exclude_none`
+
+---
+## 🔐 Authentication & Login
+ 
+### Login Request (Updated)
+`POST /api/v1/auth/login` requires `platform` **and** `role`:
+ 
+```json
+{
+    "user_name": "john",
+    "password": "secret",
+    "platform": "web",
+    "role": "SCHOOL_ADMIN",
+    "device_info": "Chrome/125 Windows"
+}
+```
+ 
+**Two-layer validation:**
+ 
+**Layer 1 — Pydantic (422, before DB):**
+- `platform` must be `"web"` or `"mobile"` (regex pattern)
+- `role` must be a valid `RoleName` enum value
+- `@model_validator` cross-checks: `role` must be in `PLATFORM_ROLES[platform]`
+  - `"web"` → `{SUPER_ADMIN, SCHOOL_ADMIN, BRANCH_ADMIN}`
+  - `"mobile"` → `{DRIVER, STUDENT}`
+**Layer 2 — Service (401, after DB):**
+- Correct credentials but declared role not held by user → `401 "This account does not have the specified role."`
+- Correct credentials, correct role, wrong platform → already caught by Layer 1
+**Examples rejected:**
+- SUPER_ADMIN logging in with `role="SCHOOL_ADMIN"` → 401 (doesn't hold that role)
+- SCHOOL_ADMIN logging in with `role="SUPER_ADMIN"` → 401 (doesn't hold that role)
+- DRIVER on `platform="web"` with `role="DRIVER"` → 422 (DRIVER not in web platform roles)
+**Token contains only the declared role's assignments** — a SCHOOL_ADMIN user who manages two schools gets both assignments embedded, but no other role types.
+ 
+### JWT Payload Structure
+```json
+{
+    "sub": "42",
+    "user_name": "john",
+    "role": "SCHOOL_ADMIN",
+    "school_id": 3,
+    "branch_id": null,
+    "roles": [
+        { "role_name": "SCHOOL_ADMIN", "school_id": 3, "branch_id": null }
+    ],
+    "type": "access",
+    "iat": 1710000000,
+    "exp": 1710001800
+}
+```
+ 
+| Claim | SUPER_ADMIN | SCHOOL_ADMIN | BRANCH_ADMIN / DRIVER / STUDENT |
+|---|---|---|---|
+| `role` | `"SUPER_ADMIN"` | `"SCHOOL_ADMIN"` | their role |
+| `school_id` | `null` | their school PK | their school PK |
+| `branch_id` | `null` | `null` | their branch PK |
+ 
+> **RULE:** Never trust client-provided `school_id` or `branch_id` for security decisions. Always derive from JWT (`current_user.school_id`, `current_user.branch_id`).
+ 
+---
+ 
+## 🔒 Multi-Tenancy — Three Isolation Layers
+ 
+### Layer 1: Application (service + repository)
+Scope derived from JWT via `CurrentUser`. Service passes `accessible_branch_ids` from `current_user.get_accessible_branch_ids(school_id)` to repository.
+ 
+`get_accessible_branch_ids(school_id)`:
+- `None` → SUPER_ADMIN or SCHOOL_ADMIN — no branch filter
+- `[branch_id]` → BRANCH_ADMIN/DRIVER/STUDENT — single branch
+- `[]` → user has no access to this school — raise 404
+### Layer 2: ORM Auto-filter (defence in depth)
+`_attach_orm_filter` in `core/db/tenant.py` listens on `do_orm_execute` and transparently appends `WHERE school_id = X [AND branch_id = Y]` to every ORM SELECT. Prevents accidental data leaks even if service code forgets a filter.
+ 
+### Layer 3: PostgreSQL RLS
+Every tenant-aware table has `ENABLE ROW LEVEL SECURITY` + policies. SET LOCAL session variables per transaction:
+```sql
+set_config('app.user_id',   '42',           true)  -- LOCAL to transaction
+set_config('app.user_role', 'SCHOOL_ADMIN', true)
+set_config('app.school_id', '3',            true)
+set_config('app.branch_id', '0',            true)   -- '0' when null
+```
+`true` = LOCAL — auto-cleared when transaction ends. Safe with pgBouncer/asyncpg pools.
+ 
+### Session Dependency — which to use
+| Route type | Dependency | Reason |
+|---|---|---|
+| Auth routes (`/login`, `/refresh`, `/logout`, `/me`) | `get_db` | No tenant context yet |
+| All other routes | `build_tenant_dep(auth_dep)` | Sets RLS variables before any query |
+ 
+```python
+# In router.py for non-auth domains:
+from app.core.db.tenant import build_tenant_dep
+from app.api.v1.dependencies import AnyAuthenticated, require_roles
+ 
+TenantDB      = build_tenant_dep(AnyAuthenticated)
+AdminTenantDB = build_tenant_dep(require_roles(RoleName.BRANCH_ADMIN))
+```
+ 
+### DB User (CRITICAL)
+Application must connect as a **non-superuser**. Superusers bypass RLS.
+```sql
+CREATE ROLE app_user LOGIN PASSWORD '...';
+-- GRANT SELECT, INSERT, UPDATE, DELETE on all tables to app_user
+-- Do NOT grant BYPASSRLS
+```
+ 
+> Full guide: `docs/MultiTenancy.md`
 
 ---
 
 ## 📬 API Response Format
-
+ 
 ### Success — Single Object
 FastAPI returns the `response_model` directly — no wrapper envelope.
 ```json
 {
-    "student_id": 42,
+    "bus_id": 1,
     "school_id": 1,
     "branch_id": 3,
-    "first_name": "Aanya",
-    "last_name": "Sharma",
-    "grade": "5",
-    "section": "A",
+    "bus_number": "TN01AB1234",
+    "capacity": 40,
     "is_active": true,
     "created_at": "2026-01-15T08:30:00Z",
     "updated_at": "2026-01-15T08:30:00Z"
 }
 ```
-
+ 
 ### Success — Paginated List
-All list endpoints return a consistent paginated envelope via shared `PaginatedResponse[T]`:
+All list endpoints return a consistent paginated envelope via `PaginatedResponse[T]`:
 ```json
 {
     "items": [ "...array of objects..." ],
@@ -340,12 +488,7 @@ All list endpoints return a consistent paginated envelope via shared `PaginatedR
 ```json
 {
     "detail": [
-        {
-            "type": "missing",
-            "loc": ["body", "first_name"],
-            "msg": "Field required",
-            "input": {}
-        }
+        { "type": "missing", "loc": ["body", "first_name"], "msg": "Field required", "input": {} }
     ]
 }
 ```
@@ -355,11 +498,13 @@ All list endpoints return a consistent paginated envelope via shared `PaginatedR
 |---|---|
 | Successful fetch | `200 OK` |
 | Successful create | `201 Created` |
-| Successful delete | `204 No Content` |
+| Successful soft-delete | `200 OK` + deactivated object |
+| Successful unlink (hard delete link row) | `204 No Content` |
 | Bad request / logic error | `400 Bad Request` |
 | Unauthenticated | `401 Unauthorized` |
 | Insufficient permissions | `403 Forbidden` |
-| Resource not found | `404 Not Found` |
+| Resource not found / scope violation on GET | `404 Not Found` |
+| Scope violation on POST/PATCH/DELETE | `403 Forbidden` |
 | State conflict | `409 Conflict` |
 | Validation error | `422 Unprocessable Entity` |
 | Server error | `500 Internal Server Error` |
@@ -375,6 +520,20 @@ Router → Service → Repository → DB
           raises AppException → FastAPI catches → JSON error response
 ```
 Repositories raise `NotFoundError` variants. Services raise business logic exceptions. Routers never catch — FastAPI handles all `HTTPException` subclasses automatically.
+
+
+```python
+# GET — scope violation returns 404
+async def get_school(db, school_id, accessible_school_ids):
+    if accessible_school_ids is not None and school_id not in accessible_school_ids:
+        raise SchoolNotFoundError(identifier=school_id)  # 404, not 403
+    return await school_repo.get_school_by_school_id(db, school_id)
+ 
+# POST/PATCH/DELETE — scope violation returns 403
+async def update_school(db, school_id, payload, accessible_school_ids):
+    if accessible_school_ids is not None and school_id not in accessible_school_ids:
+        raise ForbiddenError()  # 403
+```
 
 ### In Service Layer — raise domain exceptions
 ```python
@@ -444,359 +603,47 @@ async def update_school(db, school_id, payload, current_user):
         raise ForbiddenError()  # 403
     ...
 ```
-
----
-
-## ❓ Open Decisions / TODOs
-
-| # | Decision | Status | Notes |
-|---|---|---|---|
-| 1 | `core/schemas.py` — shared `PaginatedResponse[T]` + `TimestampMixin` | ⏳ To be created | Needed before first list endpoint |
-| 2 | Alembic setup — `alembic.ini` + `env.py` async config | ⏳ To be done | Do after all models are written |
-| 3 | Logging setup — format, level, handlers | ⏳ Not decided | Will add to `main.py` lifespan |
-| 4 | Rate limiting — login endpoint especially | ⏳ Not decided | `slowapi` library likely |
-| 5 | GPS log ingestion — dedicated endpoint or WebSocket? | ⏳ Not decided | High-volume, needs benchmarking |
-| 6 | Push notification provider — FCM, OneSignal, other? | ⏳ Not decided | Affects `notifications/service.py` |
-| 7 | `is_active` enforcement on every request | ⏳ Not decided | Currently token presence is sufficient |
-| 8 | Soft delete pattern — consistent `is_active` flag across all domains | ⏳ Not decided | All tables have `is_active` |
-| 9 | Dockerfile + docker-compose setup | ⏳ Pending | Do after all domains complete |
-| 10 | Refresh token rotation on every refresh | ⏳ Not decided | Currently reusing same token — rotation = issue new token + revoke old on each refresh |
-
----
-
-## 📁 Completed Files — Key Details
-
-### `app/core/config.py`
-- Uses `pydantic-settings` v2 with `model_config = SettingsConfigDict(...)`
-- `DATABASE_URL` is a `@property` that composes individual `DB_*` fields into async DSN
-- DSN format: `postgresql+asyncpg://user:password@host:port/dbname`
-- `JWT_SECRET_KEY` falls back to `secrets.token_urlsafe(64)` if not set in `.env`
-- `ALLOWED_ORIGINS` validator splits comma-separated string into list
-- Singleton: `settings = Settings()` — import and use everywhere
-- Notable settings: `DB_POOL_PRE_PING=True`, `GPS_STALE_THRESHOLD_SECONDS=60`, `GPS_MIN_ACCURACY_METERS=50.0`
-
-### `app/core/enums.py`
-- All 8 DB enums mirrored as `str, enum.Enum` (serializes to string in Pydantic/SQLAlchemy)
-- Enums: `RoleName`, `TripType`, `TripStatus`, `AttendanceStatus`, `NotificationType`, `NotificationStatus`, `NotificationChannel`, `LeaveRequestStatus`
-- Helper sets at bottom: `TRIP_STATUS_TRANSITIONS`, `LEAVE_STATUS_TRANSITIONS`, `BRANCH_SCOPED_ROLES`, `SCHOOL_SCOPED_ROLES`
-- Used by service layer for state-transition validation
-
-### `app/core/exceptions.py`
-- Three-level hierarchy: `AppException → HTTPException` (FastAPI handles natively)
-- `NotFoundError` is generic — takes `resource` name + optional `identifier`
-- Domain-specific errors: `StudentNotFoundError`, `TripNotFoundError`, etc.
-- `UnauthorizedError` includes `WWW-Authenticate: Bearer` header (HTTP spec requirement)
-- 400 (Bad Request), 401 (Unauthorized), 403 (Forbidden), 404 (Not Found), 409 (Conflict), 422 (Unprocessable), 500 (Internal Server Error)
-
-### `app/core/security.py`
-- `hash_password` / `verify_password` — bcrypt wrapped in `run_in_executor` (non-blocking)
-- `create_access_token(user_id, user_name, roles)` — embeds full role list with school/branch scope
-- `create_refresh_token(user_id)` — contains only `user_id`, no role data
-- `decode_access_token` / `decode_refresh_token` — validates signature, expiry, and token type
-- `extract_user_id(payload)` — parses `sub` claim (stored as string) back to int
-- Access token payload includes: `sub`, `user_name`, `roles[]`, `type`, `iat`, `exp`
-- Refresh token payload includes: `sub`, `type`, `iat`, `exp`
-
-### `app/core/db/base.py`
-- `NAMING_CONVENTION` dict for consistent Alembic constraint names
-- `Base(DeclarativeBase)` with `MetaData(naming_convention=...)` — imported by all domain models
-
-### `app/core/db/engine.py`
-- `create_async_engine` with all pool settings from `settings`
-- `AsyncSessionFactory` — `async_sessionmaker` with `expire_on_commit=False`, `autoflush=False`
-
-### `app/core/db/session.py`
-- `get_db()` — async generator, yields `AsyncSession`
-- try/commit → except/rollback → finally/close pattern
-- Return type: `AsyncGenerator[AsyncSession, None]`
-
-### `app/core/db/__init__.py`
-- Re-exports: `Base`, `engine`, `AsyncSessionFactory`, `get_db`
-- All other files import from `app.core.db` (not internal submodules)
-
-### `app/api/v1/dependencies.py`
-- `bearer_scheme = HTTPBearer(auto_error=False)` — raises own 401 not FastAPI's 403
-- `CurrentUser` class — populated from JWT payload, no DB hit
-  - `has_role()`, `has_any_role()` — role checks
-  - `has_school_access(school_id)` — SUPER_ADMIN passes all
-  - `has_branch_access(school_id, branch_id)` — SUPER_ADMIN + SCHOOL_ADMIN pass all
-  - `get_accessible_school_ids()` — returns `None` for SUPER_ADMIN (means all)
-  - `get_accessible_branch_ids(school_id)` — returns `None` for SUPER_ADMIN + SCHOOL_ADMIN
-- `get_current_user()` — core auth dependency
-- `require_roles(*roles)` — factory returning a dependency
-- `check_school_access()` / `check_branch_access()` — helpers for use inside route handlers
-- Pre-built: `SuperAdminRequired`, `SchoolAdminRequired`, `BranchAdminRequired`, `AnyAuthenticated`
-
-### `app/api/v1/router.py`
-- `api_router = APIRouter(prefix="/api/v1")`
-- All domain routers are commented out — uncomment as each domain is built
-- Imported in `main.py` as `from app.api.v1.router import api_router`
-
-### `app/main.py`
-- `lifespan` context manager — replaces deprecated `@app.on_event`
-- `Base.metadata.create_all` only runs in `ENVIRONMENT=development`
-- `create_app()` factory pattern — clean for testing
-- Docs (`/docs`, `/redoc`, `/openapi.json`) disabled in production
-- CORS middleware configured from `settings.ALLOWED_ORIGINS`
-- Health check at `GET /health`
-- `engine.dispose()` on shutdown — graceful connection pool cleanup
-- Uvicorn target: `app.main:app`
-
----
-## ✅ Completed — `auth/` Domain
- 
-### Status: Fully implemented ✅
- 
-> See `docs/Auth.md` for the full supplementary design document.
-> If a better/optimal approach is found, update both this section and `docs/Auth.md`.
-
 ---
  
-### Tables Involved
-| Table | Notes |
+## 🔑 Key Rules (Enforce in Every File)
+ 
+| Concern | Rule |
 |---|---|
-| `users` | Authentication — login, password, is_active |
-| `roles` | Seeded once — `SUPER_ADMIN`, `SCHOOL_ADMIN`, etc. |
-| `user_roles` | RBAC join — one user, multiple scoped roles |
-| `refresh_tokens` | New table — hashed tokens with expiry + revocation |
- 
-
-## ⏭️ Next Up — `auth/` Domain
-
-### Order of implementation:
-1. `auth/models.py` — ORM models:
-   - `User` (maps to `users` table)
-   - `Role` (maps to `roles` table)
-   - `UserRole` (maps to `user_roles` table — RBAC join table)
-   - `RefreshToken` (new table — stores hashed refresh tokens with expiry)
-
-2. `auth/schemas.py` — Pydantic models:
-   - `LoginRequest`, `TokenResponse`, `RefreshRequest`
-   - `UserCreate`, `UserResponse`
-
-3. `auth/service.py` — Business logic:
-   - `login()` — verify credentials, issue access + refresh tokens
-   - `refresh()` — validate refresh token, issue new access token
-   - `logout()` — revoke refresh token
-   - `logout_all()` — revoke all refresh tokens for a user
-
-4. `auth/router.py` — FastAPI routes:
-   - `POST /auth/login`
-   - `POST /auth/refresh`
-   - `POST /auth/logout`
-   - `POST /auth/logout-all`
+| Route functions | Always `async def` |
+| Service functions | Always `async def` |
+| Repository functions | Always `async def` |
+| DB operations | `await session.execute(select(...))` — never `session.query()` |
+| ORM loading | `selectinload` / `joinedload` — never lazy load (`lazy="noload"` on all relationships) |
+| Blocking I/O | Always wrap in `asyncio.get_event_loop().run_in_executor()` |
+| Session commits | Handled by `get_db` / `get_tenant_db` — repositories call `await session.flush()` only |
+| Password hashing | `await hash_password()` / `await verify_password()` (non-blocking) |
+| Datetime | Always use `utcnow()` from `app.core.utils` — never `datetime.utcnow()` or `datetime.now()` |
+| Timestamps | All DB columns use `TIMESTAMPTZ` — `TZDateTime = TIMESTAMP(timezone=True)` from `app.core.db.base` |
+| UPDATE queries | Use `UPDATE ... RETURNING Model` — single round-trip, no stale identity map |
+| ORM cascade | Always `cascade="save-update, merge"` only — NEVER `"all"`, `"delete"`, or `"delete-orphan"` |
+| Soft deletes | Always `is_active = False` — never `db.delete(obj)` in application code |
+| Scope check order | Always check scope BEFORE hitting the DB — never fetch then reject |
+| Service layer | Services accept primitives only — no `CurrentUser`, no HTTP objects |
+| Role enforcement | `require_roles()` at the router — services never check roles directly |
+| Tenant context | ALWAYS derive from JWT (`current_user`) — never trust client-provided `school_id`/`branch_id` |
+| Non-auth sessions | Use `build_tenant_dep()` — never use plain `get_db()` on tenant-aware routes |
+| DB user | Application DB user must NOT be superuser — superusers bypass RLS |
+| PATCH updates | Use `model_dump(exclude_unset=True)` — not `exclude_none` |
 
 ---
-
  
-### Implementation Order
-1. `auth/models.py`          ✅ Done
-2. `auth/schemas.py`         ✅ Done
-3. `auth/repository.py`      ✅ Done
-4. `auth/service.py`         ✅ Done
-5. `api/v1/auth.py`          ✅ Done
-6. Uncomment auth router in `app/api/v1/router.py` ✅ Done
+## 📦 Dependencies to Install
  
----
- 
-## ⏭️ Next Up — `schools/` Domain
- 
-> Full design document: `docs/Schools.md`
- 
-### Status: Design finalized ✅ — Ready to code
- 
-### Tables Involved
-| Table | Notes |
-|---|---|
-| `schools` | Top-level tenant — `school_name` (renamed from `name`) |
-| `branches` | Scoped to school — lives in this domain, not separate |
- 
----
- 
-### `schools/models.py` — ORM Models
- 
-**`School`** → maps to `schools` table
+```txt
+fastapi
+uvicorn[standard]
+sqlalchemy[asyncio]
+asyncpg
+alembic
+pydantic-settings
+python-jose[cryptography]
+passlib[bcrypt]
 ```
-school_id   : SERIAL PK
-school_name : VARCHAR(255) NOT NULL   ← renamed from name
-is_active   : BOOLEAN DEFAULT TRUE
-created_at  : TIMESTAMP
-updated_at  : TIMESTAMP
-```
- 
-**`Branch`** → maps to `branches` table
-```
-branch_id      : SERIAL PK
-school_id      : INT FK → schools (CASCADE)
-branch_name    : VARCHAR(150) NOT NULL
-branch_address : TEXT nullable
-branch_phone   : VARCHAR(20) nullable
-branch_email   : VARCHAR(255) nullable
-is_active      : BOOLEAN DEFAULT TRUE
-created_at     : TIMESTAMP
-updated_at     : TIMESTAMP
-UNIQUE (branch_id, school_id)
-```
- 
-**Relationships:**
-```
-School → Branch  (one-to-many, back_populates="school")
-Branch → School  (many-to-one, back_populates="branches")
-```
- 
----
- 
-### `schools/schemas.py` — Pydantic Models
- 
-**School Requests:**
-```
-SchoolCreate → school_name: str (3-255 chars)
-SchoolUpdate → school_name: str | None, is_active: bool | None
-```
- 
-**School Responses:**
-```
-SchoolResponse       → school_id, school_name, is_active, created_at, updated_at
-SchoolDetailResponse → SchoolResponse + branches: list[BranchResponse]
-```
- 
-**Branch Requests:**
-```
-BranchCreate → branch_name (3-150 chars), branch_address | None,
-               branch_phone | None, branch_email | None
-BranchUpdate → branch_name | None, branch_address | None,
-               branch_phone | None, branch_email | None, is_active | None
-```
- 
-**Branch Responses:**
-```
-BranchResponse → branch_id, school_id, branch_name, branch_address,
-                 branch_phone, branch_email, is_active, created_at, updated_at
-```
- 
-**Paginated:**
-```
-PaginatedSchoolResponse → items: list[SchoolResponse], total, page, page_size, pages
-PaginatedBranchResponse → items: list[BranchResponse], total, page, page_size, pages
-```
- 
-> Also creates `core/schemas.py` with shared `PaginatedResponse[T]` — resolves Open Decision #1.
- 
----
- 
-### `schools/repository.py` — DB Queries
- 
-**School queries:**
-```python
-get_school_by_school_id(db, school_id) -> School                     # raises SchoolNotFoundError
-get_school_by_school_id_or_none(db, school_id) -> School | None
-get_all_schools(db, limit, offset, active_only) -> tuple[list[School], int]
-get_schools_by_school_ids(db, school_ids, limit, offset, active_only) -> tuple[list[School], int]
-create_school(db, school_name) -> School
-update_school_by_school_id(db, school_id, **kwargs) -> School
-deactivate_school_by_school_id(db, school_id) -> School
-```
- 
-**Branch queries:**
-```python
-get_branch_by_branch_id(db, branch_id, school_id) -> Branch          # raises BranchNotFoundError
-get_branch_by_branch_id_or_none(db, branch_id, school_id) -> Branch | None
-get_all_branches_by_school_id(db, school_id, limit, offset, active_only) -> tuple[list[Branch], int]
-get_branches_by_branch_ids(db, branch_ids, school_id, limit, offset, active_only) -> tuple[list[Branch], int]
-create_branch(db, school_id, branch_name, branch_address, branch_phone, branch_email) -> Branch
-update_branch_by_branch_id(db, branch_id, school_id, **kwargs) -> Branch
-deactivate_branch_by_branch_id(db, branch_id, school_id) -> Branch
-```
- 
----
- 
-### `schools/service.py` — Business Logic
- 
-**School functions:**
-```python
-create_school(db, payload, current_user) -> SchoolResponse
-    1. require SUPER_ADMIN → 403 if not
-    2. create_school in repo
-    3. return SchoolResponse
- 
-get_school(db, school_id, current_user) -> SchoolResponse
-    1. get_school_by_school_id       → 404 if not found
-    2. not has_school_access         → 404 (not 403 — never reveal existence)
-    3. return SchoolResponse
- 
-get_all_schools(db, page, page_size, current_user) -> PaginatedSchoolResponse
-    1. SUPER_ADMIN → get_all_schools (no filter)
-       others      → get_schools_by_school_ids(accessible_school_ids)
-    2. return PaginatedSchoolResponse
- 
-update_school(db, school_id, payload, current_user) -> SchoolResponse
-    1. require SUPER_ADMIN → 403 if not
-    2. get_school_by_school_id → 404 if not found
-    3. update_school_by_school_id
-    4. return SchoolResponse
- 
-deactivate_school(db, school_id, current_user) -> SchoolResponse
-    1. require SUPER_ADMIN → 403 if not
-    2. get_school_by_school_id → 404 if not found
-    3. deactivate_school_by_school_id
-    4. return SchoolResponse
-```
- 
-**Branch functions:**
-```python
-create_branch(db, school_id, payload, current_user) -> BranchResponse
-    1. require SUPER_ADMIN or SCHOOL_ADMIN scoped to school_id → 403 if not
-    2. get_school_by_school_id → 404 if school not found or inactive
-    3. create_branch in repo
-    4. return BranchResponse
- 
-get_branch(db, school_id, branch_id, current_user) -> BranchResponse
-    1. get_branch_by_branch_id       → 404 if not found
-    2. not has_branch_access         → 404 (not 403)
-    3. return BranchResponse
- 
-get_all_branches(db, school_id, page, page_size, current_user) -> PaginatedBranchResponse
-    1. get_school_by_school_id       → 404 if school not found
-    2. not has_school_access         → 404 (not 403)
-    3. SUPER_ADMIN/SCHOOL_ADMIN → get_all_branches_by_school_id
-       others                   → get_branches_by_branch_ids(accessible_branch_ids)
-    4. return PaginatedBranchResponse
- 
-update_branch(db, school_id, branch_id, payload, current_user) -> BranchResponse
-    1. require SUPER_ADMIN or SCHOOL_ADMIN scoped to school_id → 403 if not
-    2. get_branch_by_branch_id → 404 if not found
-    3. update_branch_by_branch_id
-    4. return BranchResponse
- 
-deactivate_branch(db, school_id, branch_id, current_user) -> BranchResponse
-    1. require SUPER_ADMIN or SCHOOL_ADMIN scoped to school_id → 403 if not
-    2. get_branch_by_branch_id → 404 if not found
-    3. deactivate_branch_by_branch_id
-    4. return BranchResponse
-```
- 
----
- 
-### `api/v1/schools.py` — Routes
- 
-**School routes:**
-| Method | Path | Auth | Status | Scope violation |
-|---|---|---|---|---|
-| `POST` | `/schools/` | `SUPER_ADMIN` | `201` | `403` |
-| `GET` | `/schools/` | Bearer + tenant filter | `200` | filtered at query level |
-| `GET` | `/schools/{school_id}` | Bearer + school scope | `200` | `404` |
-| `PATCH` | `/schools/{school_id}` | `SUPER_ADMIN` | `200` | `403` |
-| `DELETE` | `/schools/{school_id}` | `SUPER_ADMIN` | `200` | `403` |
- 
-**Branch routes:**
-| Method | Path | Auth | Status | Scope violation |
-|---|---|---|---|---|
-| `POST` | `/schools/{school_id}/branches/` | `SUPER_ADMIN` or `SCHOOL_ADMIN` | `201` | `403` |
-| `GET` | `/schools/{school_id}/branches/` | Bearer + tenant filter | `200` | `404` on school, filtered at query level for branches |
-| `GET` | `/schools/{school_id}/branches/{branch_id}` | Bearer + branch scope | `200` | `404` |
-| `PATCH` | `/schools/{school_id}/branches/{branch_id}` | `SUPER_ADMIN` or `SCHOOL_ADMIN` | `200` | `403` |
-| `DELETE` | `/schools/{school_id}/branches/{branch_id}` | `SUPER_ADMIN` or `SCHOOL_ADMIN` | `200` | `403` |
- 
 ---
  
 ### Key Design Decisions
@@ -822,36 +669,6 @@ deactivate_branch(db, school_id, branch_id, current_user) -> BranchResponse
 5. `schools/service.py`                           ⏳
 6. `api/v1/schools.py`                            ⏳
 7. Uncomment schools router in `api/v1/router.py` ⏳
- 
----
-
-## 📦 Dependencies to Install
-
-```txt
-fastapi
-uvicorn[standard]
-sqlalchemy[asyncio]
-asyncpg
-alembic
-pydantic-settings
-python-jose[cryptography]
-passlib[bcrypt]
-```
-
----
-
-## 🔑 Key Async Rules (Enforce in Every File)
-
-| Concern | Rule |
-|---|---|
-| Route functions | Always `async def` |
-| Service functions | Always `async def` |
-| Repository functions | Always `async def` |
-| DB operations | `await session.execute(select(...))` — never `session.query()` |
-| ORM loading | `selectinload` / `joinedload` — never lazy load |
-| Blocking I/O | Always wrap in `asyncio.get_event_loop().run_in_executor()` |
-| Session commits | Handled by `get_db()` — repositories call `await session.flush()` only |
-| Password hashing | `await hash_password()` / `await verify_password()` (non-blocking) |
 
 ---
 
@@ -859,14 +676,334 @@ passlib[bcrypt]
 
 All 21 tables are defined in `DatabaseSchema.md`. Key tables per domain:
 
-| Domain | Tables |
+ 
+| Domain (Package) | Table(s) | URL Prefix | Status |
+|---|---|---|---|
+| `auth/` | `users`, `roles`, `user_roles`, `refresh_tokens` | `/api/v1/auth/` | ✅ |
+| `schools/` | `schools`, `branches` | `/api/v1/schools/` | ✅ |
+| `fleet/` | `buses` | `/api/v1/fleet/buses/` | ✅ |
+| `drivers/` | `drivers` | `/api/v1/drivers/` | ✅ |
+| `gps/` | `gps_devices`, `bus_device_assignments` | `/api/v1/gps/` | ✅ |
+| `routes/` | `routes`, `stops`, `route_stops` | `/api/v1/routes/` | ✅ |
+| `trips/` | `trips`, `trip_live_status` | `/api/v1/trips/` | ✅ |
+| `students/` | `students`, `parents`, `student_parents`, `student_leave_requests` | `/api/v1/students/` | ✅ |
+| `assignments/` | `student_route_assignments` | `/api/v1/assignments/` | ✅ |
+| `attendance/` | `student_attendance` | `/api/v1/attendance/` | ✅ |
+| `notifications/` | `notification_logs` | `/api/v1/notifications/` | ✅ |
+ 
+
+---
+
+## ❓ Open Decisions / TODOs
+
+| # | Decision | Status | Notes |
+|---|---|---|---|
+| 1 | `core/schemas.py` — shared `PaginatedResponse[T]` + `TimestampMixin` | ⏳ To be created | Needed before first list endpoint |
+| 2 | Alembic setup — `alembic.ini` + `env.py` async config | ⏳ To be done | Do after all models are written |
+| 3 | Logging setup — format, level, handlers | ⏳ Not decided | Will add to `main.py` lifespan |
+| 4 | Rate limiting — login endpoint especially | ⏳ Not decided | `slowapi` library likely |
+| 5 | GPS log ingestion — dedicated endpoint or WebSocket? | ⏳ Not decided | High-volume, needs benchmarking |
+| 6 | Push notification provider — FCM, OneSignal, other? | ⏳ Not decided | Affects `notifications/service.py` |
+| 7 | `is_active` enforcement on every request | ⏳ Not decided | Currently token presence is sufficient |
+| 8 | Soft delete pattern — consistent `is_active` flag across all domains | ⏳ Not decided | All tables have `is_active` |
+| 9 | Dockerfile + docker-compose setup | ⏳ Pending | Do after all domains complete |
+| 10 | Refresh token rotation on every refresh | ⏳ Not decided | Currently reusing same token — rotation = issue new token + revoke old on each refresh |
+
+---
+
+## 📁 Completed Files — Key Details
+ 
+### `app/core/config.py`
+- Uses `pydantic-settings` v2 with `model_config = SettingsConfigDict(...)`
+- `DATABASE_URL` is a `@property` composing individual `DB_*` fields into async DSN
+- DSN format: `postgresql+asyncpg://user:password@host:port/dbname`
+- `JWT_SECRET_KEY` falls back to `secrets.token_urlsafe(64)` if not set in `.env`
+- `ALLOWED_ORIGINS` validator splits comma-separated string into list
+- Singleton: `settings = Settings()` — import and use everywhere
+- Notable settings: `DB_POOL_PRE_PING=True`, `GPS_STALE_THRESHOLD_SECONDS=60`, `GPS_MIN_ACCURACY_METERS=50.0`
+- Also includes: `DEFAULT_PAGE_SIZE`, `MAX_PAGE_SIZE`
+  
+### `app/core/enums.py`
+- All 8 DB enums mirrored as `str, enum.Enum` (serializes to string in Pydantic/SQLAlchemy)
+- Enums: `RoleName`, `TripType`, `TripStatus`, `AttendanceStatus`, `NotificationType`, `NotificationStatus`, `NotificationChannel`, `LeaveRequestStatus`
+- Helper maps: `TRIP_STATUS_TRANSITIONS`, `LEAVE_STATUS_TRANSITIONS`, `NOTIFICATION_STATUS_TRANSITIONS`
+- Helper sets: `BRANCH_SCOPED_ROLES`, `SCHOOL_SCOPED_ROLES`
+- **NEW:** `PLATFORM_ROLES` — maps `"web"` / `"mobile"` to permitted `RoleName` sets — used in login validation
+  
+### `app/core/exceptions.py`
+- Three-level hierarchy: `AppException → HTTPException` (FastAPI handles natively)
+- `NotFoundError` is generic — takes `resource` name + optional `identifier`
+- Domain-specific errors: `StudentNotFoundError`, `TripNotFoundError`, `BusNotFoundError`, `DriverNotFoundError`, `DeviceNotFoundError`, `AttendanceNotFoundError`, `LeaveRequestNotFoundError`, etc.
+- `UnauthorizedError` includes `WWW-Authenticate: Bearer` header (HTTP spec)
+- **Updated:** `InvalidCredentialsError(detail=...)` — accepts optional detail override for platform mismatch message
+- Covers: 400, 401, 403, 404, 409, 422, 500
+  
+### `app/core/security.py`
+- `hash_password` / `verify_password` — bcrypt in `run_in_executor` (non-blocking)
+- `create_access_token(user_id, user_name, roles)` — embeds top-level `role`, `school_id`, `branch_id` claims (in addition to full `roles[]` list) for fast RLS variable extraction
+- `create_refresh_token(user_id)` — contains only `user_id`, no role data
+- `decode_access_token` / `decode_refresh_token` — validates signature, expiry, token type
+- `extract_user_id(payload)` — parses `sub` claim (string → int)
+- **Access token payload:** `sub`, `user_name`, `role` (primary), `school_id`, `branch_id`, `roles[]`, `type`, `iat`, `exp`
+- **Refresh token payload:** `sub`, `type`, `iat`, `exp`
+  
+### `app/core/schemas.py`
+- `PaginatedResponse[T]` — generic paginated envelope: `items`, `total`, `page`, `page_size`, `pages`
+- `paginate(items, total, page, page_size)` — helper that builds `PaginatedResponse`
+- `pagination_params(page, page_size, max_page_size)` — returns `(limit, offset)`
+  
+### `app/core/utils.py`
+- `utcnow()` — returns timezone-aware UTC datetime — use everywhere instead of `datetime.utcnow()`
+  
+### `app/core/db/base.py`
+- `NAMING_CONVENTION` dict for consistent Alembic constraint names
+- `Base(DeclarativeBase)` with `MetaData(naming_convention=...)`
+- `TZDateTime = DateTime(timezone=True)` — use on all timestamp columns
+  
+### `app/core/db/engine.py`
+- `create_async_engine` with all pool settings from `settings`
+- `AsyncSessionFactory` — `async_sessionmaker` with `expire_on_commit=False`, `autoflush=False`
+  
+### `app/core/db/session.py`
+- `get_db()` — plain async session generator, NO RLS context
+- **Use ONLY for auth routes** (`/login`, `/refresh`, `/logout`, `/me`)
+- All other routes must use `build_tenant_dep` from `core/db/tenant.py`
+  
+### `app/core/db/tenant.py` ← NEW
+- `TenantContext` — carries `user_id`, `role`, `school_id`, `branch_id` from JWT
+- `_set_rls_vars(session, ctx)` — runs `set_config('app.*', ..., true)` for RLS activation
+- `_attach_orm_filter(session, ctx)` — `do_orm_execute` listener, appends WHERE clauses to all ORM SELECTs
+- `get_tenant_db(ctx)` — core async generator (set vars → attach filter → yield → commit/rollback)
+- `build_tenant_dep(require_auth_dep)` — FastAPI `Depends()` factory for use in routers
+  
+### `app/core/db/__init__.py`
+- Re-exports: `Base`, `TZDateTime`, `engine`, `AsyncSessionFactory`, `get_db`, `TenantContext`, `build_tenant_dep`, `get_tenant_db`
+  
+### `app/api/v1/dependencies.py`
+- `bearer_scheme = HTTPBearer(auto_error=False)` — raises own 401 not FastAPI's 403
+- `CurrentUser` class — populated from JWT payload, **no DB hit**
+  - `has_role(role)`, `has_any_role(*roles)` — primary role checks
+  - `has_school_access(school_id)` — SUPER_ADMIN passes all
+  - `has_branch_access(school_id, branch_id)` — SUPER_ADMIN + SCHOOL_ADMIN pass all
+  - `get_accessible_school_ids()` → `None` (SUPER_ADMIN) or `[school_id]`
+  - `get_accessible_branch_ids(school_id)` → `None` (super/school admin), `[branch_id]` (branch-scoped), `[]` (wrong school)
+- `get_current_user()` — core auth dependency
+- `require_roles(*roles)` — factory returning a dependency that enforces role
+- `check_school_access()` / `check_branch_access()` — scope guard helpers
+- Pre-built: `SuperAdminRequired`, `SchoolAdminRequired`, `BranchAdminRequired`, `AnyAuthenticated`
+  
+### `app/api/v1/router.py`
+- `api_router = APIRouter(prefix="/api/v1")`
+- All 11 domain routers imported and registered
+- **Current registrations:** auth, schools, fleet, drivers, gps, routes, trips, students, assignments, attendance, notifications
+---
+ 
+## ✅ Completed — `auth/` Domain
+ 
+> Full design document: `docs/Auth.md`
+ 
+### Tables Involved
+| Table | Notes |
 |---|---|
-| auth | `users`, `roles`, `user_roles` + new `refresh_tokens` |
-| schools | `schools` |
-| branches | `branches` |
-| fleet | `buses`, `drivers`, `gps_devices`, `bus_device_assignments` |
-| routes | `routes`, `stops`, `route_stops` |
-| trips | `trips`, `trip_live_status`, `gps_logs` |
-| students | `students`, `parents`, `student_parents`, `student_leave_requests` |
-| attendance | `student_attendance`, `student_route_assignments` |
-| notifications | `notification_logs` |
+| `users` | Authentication — login, password, is_active |
+| `roles` | Seeded once — `SUPER_ADMIN`, `SCHOOL_ADMIN`, etc. |
+| `user_roles` | RBAC join — one user, multiple scoped roles |
+| `refresh_tokens` | New table — hashed tokens with expiry + revocation |
+ 
+### `auth/schemas.py` — Key Models
+```
+LoginRequest → user_name, password, platform ("web"|"mobile"), role (RoleName), device_info
+               @model_validator: role must be in PLATFORM_ROLES[platform] — 422 before DB
+RefreshTokenRequest → refresh_token
+LogoutRequest → refresh_token
+RoleResponse → role_id, role_name, school_id, branch_id, is_active, assigned_at
+MeResponse → UserResponse + roles: list[RoleResponse]
+TokenResponse → access_token, refresh_token, token_type="bearer", expires_in (int, seconds)
+LogoutAllResponse → revoked_count, message
+```
+ 
+### `auth/service.py` — login() flow
+```
+1. get_user_with_roles_by_user_name → raise InvalidCredentialsError on any failure
+2. verify_password                  → raise InvalidCredentialsError if wrong
+3. check user.is_active             → raise InvalidCredentialsError if inactive
+4. exact role check: user must hold the declared role (active)
+   → raise InvalidCredentialsError("This account does not have the specified role.")
+5. Build roles payload — only matching_roles (declared role only)
+6. create_access_token(user_id, user_name, roles_payload)
+7. create_refresh_token(user_id) → raw JWT
+8. SHA-256 hash → create_refresh_token in DB
+9. return TokenResponse
+```
+ 
+### `api/v1/auth.py` — Routes
+```
+POST   /api/v1/auth/login           public
+POST   /api/v1/auth/refresh         public
+POST   /api/v1/auth/logout          AnyAuthenticated
+POST   /api/v1/auth/logout-all      AnyAuthenticated
+GET    /api/v1/auth/me              AnyAuthenticated
+```
+---
+## ✅ Completed — All Other Domains
+---
+
+### Domain Summary
+ 
+| Domain | Model(s) | Key Notes |
+|---|---|---|
+| `schools/` | `School`, `Branch` | Branches nested under schools in URL; `school_name` not `name` |
+| `fleet/` | `Bus` | `capacity > 0` CHECK; RESTRICT FKs |
+| `drivers/` | `Driver` | `user_id` nullable (BIGINT); phone regex validation |
+| `gps/` | `GPSDevice`, `BusDeviceAssignment` | IMEI globally unique; append-only assignment history; partial unique indexes via Alembic |
+| `routes/` | `Route`, `Stop`, `RouteStop` | Stops RESTRICT (in-use); route_stop hard-delete is correct |
+| `trips/` | `Trip`, `TripLiveStatus` | One per route+date+type; status transitions; live status upsert IN_PROGRESS only |
+| `students/` | `Student`, `Parent`, `StudentParent`, `StudentLeaveRequest` | `user_id` NOT NULL (BIGINT); `relationship_type` (renamed from `relationship`); parents school-scoped |
+| `assignments/` | `StudentRouteAssignment` | Separate row per PICKUP/DROPOFF; soft-delete |
+| `attendance/` | `StudentAttendance` | Immutable once created; status correction BRANCH_ADMIN+; trip must be IN_PROGRESS |
+| `notifications/` | `NotificationLog` | Append-only; event_key deduplication; SENT→READ user-facing; `log_notification()` helper |
+
+---
+
+### Full API URL Map
+ 
+```
+# Auth
+POST   /api/v1/auth/login
+POST   /api/v1/auth/refresh
+POST   /api/v1/auth/logout
+POST   /api/v1/auth/logout-all
+GET    /api/v1/auth/me
+ 
+# Schools + Branches
+POST   /api/v1/schools/
+GET    /api/v1/schools/
+GET    /api/v1/schools/{school_id}
+PATCH  /api/v1/schools/{school_id}
+DELETE /api/v1/schools/{school_id}
+POST   /api/v1/schools/{school_id}/branches/
+GET    /api/v1/schools/{school_id}/branches/
+GET    /api/v1/schools/{school_id}/branches/{branch_id}
+PATCH  /api/v1/schools/{school_id}/branches/{branch_id}
+DELETE /api/v1/schools/{school_id}/branches/{branch_id}
+ 
+# Fleet (Buses only)
+POST   /api/v1/fleet/buses/
+GET    /api/v1/fleet/buses/
+GET    /api/v1/fleet/buses/{bus_id}
+PATCH  /api/v1/fleet/buses/{bus_id}
+DELETE /api/v1/fleet/buses/{bus_id}
+ 
+# Drivers
+POST   /api/v1/drivers/
+GET    /api/v1/drivers/
+GET    /api/v1/drivers/{driver_id}
+PATCH  /api/v1/drivers/{driver_id}
+DELETE /api/v1/drivers/{driver_id}
+ 
+# GPS (devices + bus-device assignments)
+POST   /api/v1/gps/devices/
+GET    /api/v1/gps/devices/
+GET    /api/v1/gps/devices/{device_id}
+PATCH  /api/v1/gps/devices/{device_id}
+DELETE /api/v1/gps/devices/{device_id}
+POST   /api/v1/gps/devices/{device_id}/assign
+POST   /api/v1/gps/devices/{device_id}/unassign
+GET    /api/v1/gps/buses/{bus_id}/device
+ 
+# Routes + Stops
+POST   /api/v1/routes/routes/
+GET    /api/v1/routes/routes/
+GET    /api/v1/routes/routes/{route_id}
+PATCH  /api/v1/routes/routes/{route_id}
+DELETE /api/v1/routes/routes/{route_id}
+GET    /api/v1/routes/routes/{route_id}/detail
+POST   /api/v1/routes/routes/{route_id}/stops
+GET    /api/v1/routes/routes/{route_id}/stops
+PATCH  /api/v1/routes/routes/{route_id}/stops/{route_stop_id}
+DELETE /api/v1/routes/routes/{route_id}/stops/{route_stop_id}
+POST   /api/v1/routes/stops/
+GET    /api/v1/routes/stops/
+GET    /api/v1/routes/stops/{stop_id}
+PATCH  /api/v1/routes/stops/{stop_id}
+DELETE /api/v1/routes/stops/{stop_id}
+ 
+# Trips + LiveStatus
+POST   /api/v1/trips/trips/
+GET    /api/v1/trips/trips/
+GET    /api/v1/trips/trips/{trip_id}
+PATCH  /api/v1/trips/trips/{trip_id}/assign
+PATCH  /api/v1/trips/trips/{trip_id}/status
+GET    /api/v1/trips/trips/{trip_id}/live-status
+PUT    /api/v1/trips/trips/{trip_id}/live-status
+ 
+# Students + Parents + Links + Leave
+POST   /api/v1/students/students/
+GET    /api/v1/students/students/
+GET    /api/v1/students/students/{student_id}
+PATCH  /api/v1/students/students/{student_id}
+DELETE /api/v1/students/students/{student_id}
+POST   /api/v1/students/students/{student_id}/parents
+GET    /api/v1/students/students/{student_id}/parents
+PATCH  /api/v1/students/students/{student_id}/parents/{student_parent_id}
+DELETE /api/v1/students/students/{student_id}/parents/{student_parent_id}
+POST   /api/v1/students/students/{student_id}/leave-requests
+GET    /api/v1/students/students/{student_id}/leave-requests
+PATCH  /api/v1/students/students/{student_id}/leave-requests/{leave_id}
+POST   /api/v1/students/parents/
+GET    /api/v1/students/parents/
+GET    /api/v1/students/parents/{parent_id}
+PATCH  /api/v1/students/parents/{parent_id}
+DELETE /api/v1/students/parents/{parent_id}
+ 
+# Assignments (student → route)
+POST   /api/v1/assignments/
+GET    /api/v1/assignments/student/{student_id}
+GET    /api/v1/assignments/route/{route_id}
+DELETE /api/v1/assignments/{assignment_id}
+ 
+# Attendance
+POST   /api/v1/attendance/trips/{trip_id}
+GET    /api/v1/attendance/trips/{trip_id}
+GET    /api/v1/attendance/students/{student_id}
+PATCH  /api/v1/attendance/trips/{trip_id}/{attendance_id}
+ 
+# Notifications
+GET    /api/v1/notifications/
+GET    /api/v1/notifications/{notification_id}
+PATCH  /api/v1/notifications/{notification_id}/read
+GET    /api/v1/notifications/admin/
+POST   /api/v1/notifications/admin/
+PATCH  /api/v1/notifications/admin/{notification_id}/status
+```
+
+---
+## ❓ Open Decisions / TODOs
+ 
+| # | Decision | Status | Notes |
+|---|---|---|---|
+| 1 | `core/schemas.py` — shared `PaginatedResponse[T]` | ✅ Resolved | `app/core/schemas.py` — `PaginatedResponse[T]`, `paginate()`, `pagination_params()` |
+| 2 | Alembic setup — `alembic.ini` + `env.py` async config | ⏳ Pending | All models done — ready to generate. `rls_policies.py` migration written |
+| 3 | Logging setup — format, level, handlers | ⏳ Not decided | Structured JSON logging recommended; add to `main.py` lifespan |
+| 4 | Rate limiting — login endpoint especially | ⏳ Not decided | `slowapi` library likely |
+| 5 | GPS log ingestion — dedicated endpoint or WebSocket? | ⏳ Not decided | High-volume, needs benchmarking; separate from `TripLiveStatus` |
+| 6 | Push notification provider — FCM, OneSignal? | ⏳ Not decided | Affects `notifications/service.py`; FCM via `firebase_messaging` in Flutter |
+| 7 | `is_active` re-check on every request | ⏳ Not decided | Currently token presence is sufficient |
+| 8 | Soft delete — `is_active` flag consistent across all domains | ✅ Resolved | All tables soft-delete via `is_active = False` — never `db.delete()` |
+| 9 | Dockerfile + docker-compose setup | ⏳ Pending | After all domains complete |
+| 10 | Refresh token rotation on every refresh | ⏳ Not decided | Currently reusing same token — rotation = issue new + revoke old on each refresh |
+| 11 | Fleet / other domain — role-aware query (SUPER_ADMIN null school_id) | ⏳ In Progress | `get_all_buses` repository pattern designed — apply to all list endpoints |
+| 12 | Keyset pagination for high-volume tables | ⏳ Pending | `gps_logs`, `student_attendance` — offset pagination gets slow at scale |
+ 
+---
+ 
+## 📚 Reference Documents
+ 
+| Document | Location | Contents |
+|---|---|---|
+| Auth design | `docs/Auth.md` | Login flow, JWT structure, refresh/logout, token storage |
+| Schools design | `docs/Schools.md` | Schools + branches domain design |
+| Multi-tenancy guide | `docs/MultiTenancy.md` | RLS policies, `build_tenant_dep`, DB user setup, background jobs |
+| React frontend context | `docs/FrontendContext_React.md` | Admin dashboard (SCHOOL_ADMIN, BRANCH_ADMIN) — React + TypeScript |
+| Flutter app context | `docs/FrontendContext_Flutter.md` | Mobile app (DRIVER, STUDENT) — Flutter + Dart |
+| Database schema | `DatabaseSchema.md` | All 21 tables with SQL |
