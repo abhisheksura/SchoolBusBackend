@@ -275,3 +275,27 @@ async def upsert_live_status(
     await db.flush()
     await db.refresh(live)
     return live
+
+async def get_todays_trips_for_driver(
+    db: AsyncSession,
+    driver_id: int,
+    school_id: int,
+    branch_id: int,
+    today,
+) -> list[Trip]:
+    """
+    Fetch all trips assigned to a specific driver for today.
+    Ordered by trip_type (PICKUP before DROPOFF).
+    Scoped to the driver's school and branch from JWT — driver cannot
+    query another branch's trips.
+    """
+    result = await db.execute(
+        select(Trip).where(
+            Trip.driver_id == driver_id,
+            Trip.school_id == school_id,
+            Trip.branch_id == branch_id,
+            Trip.service_date == today,
+        ).order_by(Trip.trip_type)
+    )
+    return list(result.scalars().all())
+ 

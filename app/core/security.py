@@ -87,22 +87,41 @@ def create_access_token(
     """
     Create a short-lived JWT access token.
 
-    Embeds user_id, user_name, and full role list (with school/branch scope)
-    so every request can be authorized without a DB lookup.
+    Embeds user_id, user_name, and full role list (with school/branch scope).
+    Also extracts the PRIMARY tenant context (role, school_id, branch_id)
+    as top-level claims so middleware can set RLS session variables without
+    scanning the roles list on every request.
+
+    Primary context rules:
+        SUPER_ADMIN  → school_id=None, branch_id=None
+        SCHOOL_ADMIN → school_id=<their school>, branch_id=None
+        Others       → school_id=<their school>, branch_id=<their branch>
 
     Args:
         user_id   : PK from users table
         user_name : unique username
         roles     : list of dicts with role_name, school_id, branch_id
+                    (already filtered to the declared login role)
 
     Returns:
         Encoded JWT string
     """
+    # Derive primary tenant context from the first (and typically only) role entry
+    primary = roles[0] if roles else {}
+    primary_role      = primary.get("role_name")
+    primary_school_id = primary.get("school_id")    # None for SUPER_ADMIN
+    primary_branch_id = primary.get("branch_id")    # None for SUPER/SCHOOL_ADMIN
+    primary_driver_id = primary.get("driver_id")    # None for all non-DRIVER roles
+
     payload = _build_payload(
         data={
-            "sub": str(user_id),
-            "user_name": user_name,
-            "roles": roles,
+            "sub"       : str(user_id),
+            "user_name" : user_name,
+            "role"      : primary_role,          # primary role — single string
+            "school_id" : primary_school_id,     # None for SUPER_ADMIN
+            "branch_id" : primary_branch_id,     # None for SUPER/SCHOOL_ADMIN
+            "driver_id" : primary_driver_id,     # None for all non-DRIVER roles
+            "roles"     : roles,                 # full list for multi-scope users
         },
         expires_delta=timedelta(
             minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES

@@ -27,98 +27,95 @@ bearer_scheme = HTTPBearer(auto_error=False)
 # No DB round-trip — everything needed for authorization lives in the token.
 # -----------------------------------------------------------------------------
 class CurrentUser:
+    """
+    Lightweight auth context populated entirely from the JWT payload.
+    No DB round-trip — everything needed for authorization lives in the token.
+
+    Primary claims (top-level in JWT):
+        role      — the single role the user logged in as (from LoginRequest.role)
+        school_id — None for SUPER_ADMIN, set for all others
+        branch_id — None for SUPER_ADMIN + SCHOOL_ADMIN, set for branch-scoped roles
+
+    These are also used by get_tenant_db() to set PostgreSQL RLS session variables.
+    """
+
     def __init__(self, payload: dict[str, Any]):
-        self.user_id: int = extract_user_id(payload)
-        self.user_name: str = payload.get("user_name", "")
-        self.roles: list[dict[str, Any]] = payload.get("roles", [])
+        self.user_id   : int             = extract_user_id(payload)
+        self.user_name : str             = payload.get("user_name", "")
+        self.role      : str             = payload.get("role", "")
+        self.school_id : int | None      = payload.get("school_id")     # None = SUPER_ADMIN
+        self.branch_id : int | None      = payload.get("branch_id")     # None = SUPER/SCHOOL ADMIN
+        self.driver_id : int | None      = payload.get("driver_id")     # Set only for DRIVER role
+        self.roles     : list[dict[str, Any]] = payload.get("roles", [])
 
     # -------------------------------------------------------------------------
-    # Role checks
+    # Role checks — uses primary role (single declared login role)
     # -------------------------------------------------------------------------
     def has_role(self, role_name: RoleName) -> bool:
-        """Return True if the user holds the given role (any scope)."""
-        return any(r["role_name"] == role_name.value for r in self.roles)
+        """Return True if the user's primary login role matches."""
+        return self.role == role_name.value
 
     def has_any_role(self, *role_names: RoleName) -> bool:
-        """Return True if the user holds at least one of the given roles."""
-        role_values = {r.value for r in role_names}
-        return any(r["role_name"] in role_values for r in self.roles)
+        """Return True if the primary login role is one of the given roles."""
+        return self.role in {r.value for r in role_names}
 
     # -------------------------------------------------------------------------
-    # Scope checks
-    # Mirrors the CHECK constraint logic in user_roles:
-    #   SUPER_ADMIN  → no scope restriction
-    #   SCHOOL_ADMIN → school-level scope, all branches within
-    #   others       → must match both school_id AND branch_id
+    # Scope checks — derived from primary JWT claims
     # -------------------------------------------------------------------------
     def has_school_access(self, school_id: int) -> bool:
         """
         Return True if the user has access to the given school.
-        SUPER_ADMIN passes automatically.
+        SUPER_ADMIN (school_id=None in JWT) always passes.
         """
-        if self.has_role(RoleName.SUPER_ADMIN):
+        if self.school_id is None:           # SUPER_ADMIN
             return True
-        return any(r.get("school_id") == school_id for r in self.roles)
+        return self.school_id == school_id
 
     def has_branch_access(self, school_id: int, branch_id: int) -> bool:
         """
         Return True if the user has access to the given branch.
-        SUPER_ADMIN and SCHOOL_ADMIN (for their school) pass automatically.
+        SUPER_ADMIN and SCHOOL_ADMIN (branch_id=None in JWT) always pass
+        for any branch within their school.
         """
-        if self.has_role(RoleName.SUPER_ADMIN):
+        if self.school_id is None:           # SUPER_ADMIN
             return True
-        if any(
-            r["role_name"] == RoleName.SCHOOL_ADMIN.value
-            and r.get("school_id") == school_id
-            for r in self.roles
-        ):
+        if self.school_id != school_id:
+            return False
+        if self.branch_id is None:           # SCHOOL_ADMIN — all branches
             return True
-        return any(
-            r.get("school_id") == school_id and r.get("branch_id") == branch_id
-            for r in self.roles
-        )
+        return self.branch_id == branch_id
 
     # -------------------------------------------------------------------------
-    # Scope accessors
-    # Used by services to build tenant-filtered queries.
-    # None means "all" — used for SUPER_ADMIN / SCHOOL_ADMIN.
+    # Scope accessors — used by services to build tenant-filtered queries
+    # None means "all" — no filter applied (SUPER_ADMIN / SCHOOL_ADMIN)
     # -------------------------------------------------------------------------
     def get_accessible_school_ids(self) -> list[int] | None:
         """
-        Return list of school_ids the user can access.
-        Returns None for SUPER_ADMIN (meaning all schools).
+        None → SUPER_ADMIN, access all schools.
+        [school_id] → everyone else, access only their school.
         """
-        if self.has_role(RoleName.SUPER_ADMIN):
+        if self.school_id is None:           # SUPER_ADMIN
             return None
-        return list({
-            r["school_id"]
-            for r in self.roles
-            if r.get("school_id") is not None
-        })
+        return [self.school_id]
 
     def get_accessible_branch_ids(self, school_id: int) -> list[int] | None:
         """
-        Return list of branch_ids the user can access within a school.
-        Returns None for SUPER_ADMIN and SCHOOL_ADMIN (meaning all branches).
+        None → SUPER_ADMIN or SCHOOL_ADMIN, access all branches in school.
+        [branch_id] → branch-scoped roles, access only their branch.
+        [] → user has no access to this school at all.
         """
-        if self.has_role(RoleName.SUPER_ADMIN):
+        if self.school_id is None:           # SUPER_ADMIN
             return None
-        if any(
-            r["role_name"] == RoleName.SCHOOL_ADMIN.value
-            and r.get("school_id") == school_id
-            for r in self.roles
-        ):
+        if self.school_id != school_id:      # wrong school entirely
+            return []
+        if self.branch_id is None:           # SCHOOL_ADMIN — all branches
             return None
-        return list({
-            r["branch_id"]
-            for r in self.roles
-            if r.get("school_id") == school_id
-            and r.get("branch_id") is not None
-        })
+        return [self.branch_id]
 
     def __repr__(self) -> str:
         return (
-            f"<CurrentUser user_id={self.user_id} user_name={self.user_name}>"
+            f"<CurrentUser user_id={self.user_id} role={self.role} "
+            f"school_id={self.school_id} branch_id={self.branch_id} driver_id={self.driver_id}>"
         )
 
 

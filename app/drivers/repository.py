@@ -126,3 +126,18 @@ async def deactivate_driver_by_driver_id(
     if not driver:
         raise DriverNotFoundError(identifier=driver_id)
     return driver
+
+ 
+async def get_driver_by_user_id_or_none(
+    db: AsyncSession,
+    user_id: int,
+) -> Driver | None:
+    """
+    Fetch a driver by their linked user account.
+    Used during login to embed driver_id in the JWT.
+    Returns None if no driver record is linked to this user.
+    """
+    result = await db.execute(
+        select(Driver).where(Driver.user_id == user_id, Driver.is_active == True)
+    )
+    return result.scalar_one_or_none()

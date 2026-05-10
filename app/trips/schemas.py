@@ -123,3 +123,31 @@ class TripLiveStatusResponse(BaseModel):
 # Paginated Response Schemas
 # =============================================================================
 PaginatedTripResponse = PaginatedResponse[TripResponse]
+
+# =============================================================================
+# Driver-specific Schemas
+# =============================================================================
+ 
+class TodaysTripResponse(BaseModel):
+    """
+    Enriched trip summary for the driver's today view.
+    Identical to TripResponse but named distinctly for OpenAPI clarity —
+    makes it obvious in the docs that this is the driver-facing endpoint.
+    Future enrichment (e.g. route_name, stop_count) can be added here
+    without changing the admin-facing TripResponse.
+    """
+    model_config = ConfigDict(from_attributes=True)
+ 
+    trip_id          : int
+    school_id        : int
+    branch_id        : int
+    route_id         : int
+    bus_id           : int | None
+    driver_id        : int | None
+    service_date     : date
+    trip_type        : str
+    trip_status      : str
+    actual_start_time: datetime | None
+    actual_end_time  : datetime | None
+    created_at       : datetime
+    updated_at       : datetime

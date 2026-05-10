@@ -245,3 +245,168 @@ async def upsert_live_status(
         last_stop_arrival_time=payload.last_stop_arrival_time,
     )
     return TripLiveStatusResponse.model_validate(live)
+
+# =============================================================================
+# Driver-Facing Trip Services
+# =============================================================================
+ 
+async def get_todays_trips_for_driver(
+    db: AsyncSession,
+    driver_id: int,
+    school_id: int,
+    branch_id: int,
+) -> list[TripResponse]:
+    """
+    Fetch all trips assigned to the authenticated driver for today (UTC date).
+    Only the calling driver's own trips — no cross-driver access possible
+    because driver_id, school_id, and branch_id all come from the JWT.
+ 
+    Returns all statuses (SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED)
+    so the driver sees the full day's picture.
+ 
+    Role check (DRIVER only) enforced at router.
+    """
+    from app.core.utils import utcnow
+    today = utcnow().date()
+ 
+    trips = await trip_repo.get_todays_trips_for_driver(
+        db=db,
+        driver_id=driver_id,
+        school_id=school_id,
+        branch_id=branch_id,
+        today=today,
+    )
+    return [TripResponse.model_validate(t) for t in trips]
+ 
+ 
+async def start_trip(
+    db: AsyncSession,
+    trip_id: int,
+    school_id: int,
+    branch_id: int,
+    driver_id: int,
+) -> TripResponse:
+    """
+    Start a trip: SCHEDULED → IN_PROGRESS.
+    Sets actual_start_time to utcnow().
+ 
+    Ownership check: the trip's driver_id must match the calling driver's JWT
+    driver_id. A driver cannot start another driver's trip.
+    Role check (DRIVER only) enforced at router.
+ 
+    Raises:
+        TripNotFoundError         : trip not found or not in caller's branch
+        ForbiddenError            : trip belongs to a different driver
+        InvalidStatusTransitionError : trip is not SCHEDULED
+    """
+    trip = await trip_repo.get_trip_by_trip_id(db, trip_id, school_id, branch_id)
+ 
+    # Ownership check — driver can only act on their own trip
+    if trip.driver_id != driver_id:
+        raise TripNotFoundError(identifier=trip_id)  # 404 — don't reveal existence
+ 
+    current = TripStatus(trip.trip_status)
+    allowed = TRIP_STATUS_TRANSITIONS.get(current, set())
+    if TripStatus.IN_PROGRESS not in allowed:
+        raise InvalidStatusTransitionError(
+            current=current.value,
+            requested=TripStatus.IN_PROGRESS.value,
+        )
+ 
+    updated = await trip_repo.update_trip_status(
+        db=db,
+        trip_id=trip_id,
+        school_id=school_id,
+        branch_id=branch_id,
+        new_status=TripStatus.IN_PROGRESS,
+        actual_start_time=utcnow(),
+    )
+    return TripResponse.model_validate(updated)
+ 
+ 
+async def end_trip(
+    db: AsyncSession,
+    trip_id: int,
+    school_id: int,
+    branch_id: int,
+    driver_id: int,
+) -> TripResponse:
+    """
+    End a trip: IN_PROGRESS → COMPLETED.
+    Sets actual_end_time to utcnow().
+ 
+    Ownership check: the trip's driver_id must match the calling driver's JWT
+    driver_id.
+    Role check (DRIVER only) enforced at router.
+ 
+    Raises:
+        TripNotFoundError         : trip not found or not in caller's branch
+        ForbiddenError            : trip belongs to a different driver
+        InvalidStatusTransitionError : trip is not IN_PROGRESS
+    """
+    trip = await trip_repo.get_trip_by_trip_id(db, trip_id, school_id, branch_id)
+ 
+    if trip.driver_id != driver_id:
+        raise TripNotFoundError(identifier=trip_id)
+ 
+    current = TripStatus(trip.trip_status)
+    allowed = TRIP_STATUS_TRANSITIONS.get(current, set())
+    if TripStatus.COMPLETED not in allowed:
+        raise InvalidStatusTransitionError(
+            current=current.value,
+            requested=TripStatus.COMPLETED.value,
+        )
+ 
+    updated = await trip_repo.update_trip_status(
+        db=db,
+        trip_id=trip_id,
+        school_id=school_id,
+        branch_id=branch_id,
+        new_status=TripStatus.COMPLETED,
+        actual_end_time=utcnow(),
+    )
+    return TripResponse.model_validate(updated)
+ 
+ 
+async def cancel_trip(
+    db: AsyncSession,
+    trip_id: int,
+    school_id: int,
+    branch_id: int,
+    driver_id: int,
+) -> TripResponse:
+    """
+    Cancel a trip: SCHEDULED | IN_PROGRESS → CANCELLED.
+    Sets actual_end_time to utcnow() (records when the cancellation happened).
+ 
+    Ownership check: the trip's driver_id must match the calling driver's JWT
+    driver_id.
+    Role check (DRIVER only) enforced at router.
+ 
+    Raises:
+        TripNotFoundError         : trip not found or not in caller's branch
+        InvalidStatusTransitionError : trip is already COMPLETED or CANCELLED
+    """
+    trip = await trip_repo.get_trip_by_trip_id(db, trip_id, school_id, branch_id)
+ 
+    if trip.driver_id != driver_id:
+        raise TripNotFoundError(identifier=trip_id)
+ 
+    current = TripStatus(trip.trip_status)
+    allowed = TRIP_STATUS_TRANSITIONS.get(current, set())
+    if TripStatus.CANCELLED not in allowed:
+        raise InvalidStatusTransitionError(
+            current=current.value,
+            requested=TripStatus.CANCELLED.value,
+        )
+ 
+    updated = await trip_repo.update_trip_status(
+        db=db,
+        trip_id=trip_id,
+        school_id=school_id,
+        branch_id=branch_id,
+        new_status=TripStatus.CANCELLED,
+        actual_end_time=utcnow(),
+    )
+    return TripResponse.model_validate(updated)
+ 

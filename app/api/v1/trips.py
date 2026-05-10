@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.trips import service as trip_service
 from app.trips.schemas import (
     PaginatedTripResponse,
+    TodaysTripResponse,
     TripAssignAssets,
     TripCreate,
     TripLiveStatusResponse,
@@ -26,6 +27,7 @@ router = APIRouter()
 
 TripAdminRequired     = Depends(require_roles(RoleName.SUPER_ADMIN, RoleName.SCHOOL_ADMIN, RoleName.BRANCH_ADMIN))
 DriverOrAdminRequired = Depends(require_roles(RoleName.SUPER_ADMIN, RoleName.SCHOOL_ADMIN, RoleName.BRANCH_ADMIN, RoleName.DRIVER))
+DriverRequired        = Depends(require_roles(RoleName.DRIVER))
 
 
 # =============================================================================
@@ -165,7 +167,138 @@ async def update_trip_status(
         payload=payload,
     )
 
+# =============================================================================
+# Driver-facing Routes
+# =============================================================================
 
+@router.get(
+    "/driver/todays-trips",
+    response_model=list[TodaysTripResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Driver — today's trips",
+    description=(
+        "Fetch all trips assigned to the authenticated driver for today (UTC). "
+        "Returns SCHEDULED, IN_PROGRESS, COMPLETED, and CANCELLED trips "
+        "so the driver sees the full picture of their day. "
+        "school_id and branch_id are derived from the JWT — no query params needed. "
+        "DRIVER role required."
+    ),
+)
+async def get_todays_trips(
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = DriverRequired,
+) -> list[TodaysTripResponse]:
+    """
+    No school_id / branch_id query params — all context comes from the JWT.
+    A driver can only see their own trips in their own branch.
+    """
+    if current_user.driver_id is None:
+        # Driver record not linked to this user account yet
+        raise ForbiddenError(
+            detail="No driver profile is linked to this account. Contact your administrator."
+        )
+    return await trip_service.get_todays_trips_for_driver(
+        db=db,
+        driver_id=current_user.driver_id,
+        school_id=current_user.school_id,
+        branch_id=current_user.branch_id,
+    )
+ 
+ 
+@router.put(
+    "/trips/{trip_id}/start",
+    response_model=TripResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Driver — start trip",
+    description=(
+        "Start a SCHEDULED trip: SCHEDULED → IN_PROGRESS. "
+        "Records actual_start_time. "
+        "Driver can only start their own assigned trip. "
+        "DRIVER role required."
+    ),
+)
+async def start_trip(
+    trip_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = DriverRequired,
+) -> TripResponse:
+    """
+    No school_id / branch_id query params — all context from JWT.
+    Ownership verified in service: trip.driver_id must equal current_user.driver_id.
+    """
+    if current_user.driver_id is None:
+        raise ForbiddenError(
+            detail="No driver profile is linked to this account. Contact your administrator."
+        )
+    return await trip_service.start_trip(
+        db=db,
+        trip_id=trip_id,
+        school_id=current_user.school_id,
+        branch_id=current_user.branch_id,
+        driver_id=current_user.driver_id,
+    )
+ 
+ 
+@router.put(
+    "/trips/{trip_id}/end",
+    response_model=TripResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Driver — end trip",
+    description=(
+        "Complete an IN_PROGRESS trip: IN_PROGRESS → COMPLETED. "
+        "Records actual_end_time. "
+        "Driver can only end their own assigned trip. "
+        "DRIVER role required."
+    ),
+)
+async def end_trip(
+    trip_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = DriverRequired,
+) -> TripResponse:
+    if current_user.driver_id is None:
+        raise ForbiddenError(
+            detail="No driver profile is linked to this account. Contact your administrator."
+        )
+    return await trip_service.end_trip(
+        db=db,
+        trip_id=trip_id,
+        school_id=current_user.school_id,
+        branch_id=current_user.branch_id,
+        driver_id=current_user.driver_id,
+    )
+ 
+ 
+@router.put(
+    "/trips/{trip_id}/cancel",
+    response_model=TripResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Driver — cancel trip",
+    description=(
+        "Cancel a trip: SCHEDULED | IN_PROGRESS → CANCELLED. "
+        "Records actual_end_time (when the cancellation occurred). "
+        "Driver can only cancel their own assigned trip. "
+        "COMPLETED trips cannot be cancelled. "
+        "DRIVER role required."
+    ),
+)
+async def cancel_trip(
+    trip_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = DriverRequired,
+) -> TripResponse:
+    if current_user.driver_id is None:
+        raise ForbiddenError(
+            detail="No driver profile is linked to this account. Contact your administrator."
+        )
+    return await trip_service.cancel_trip(
+        db=db,
+        trip_id=trip_id,
+        school_id=current_user.school_id,
+        branch_id=current_user.branch_id,
+        driver_id=current_user.driver_id,
+    )
+ 
 # =============================================================================
 # TripLiveStatus Routes
 # =============================================================================

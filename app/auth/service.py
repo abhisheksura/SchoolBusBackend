@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import repository as auth_repo
+from app.drivers import repository as driver_repo
 from app.auth.models import UserRole
 from app.auth.schemas import LogoutAllResponse, MeResponse, RoleResponse, TokenResponse, UserResponse
 from app.core.config import settings
@@ -38,22 +39,31 @@ def _hash_token(raw_token: str) -> str:
     return hashlib.sha256(raw_token.encode()).hexdigest()
 
 
-def _build_roles_payload(user_roles: list[UserRole]) -> list[dict]:
+def _build_roles_payload(
+    user_roles: list[UserRole],
+    driver_id: int | None = None,
+) -> list[dict]:
     """
     Convert UserRole ORM instances into the dict format
     embedded in the JWT access token payload.
 
+    driver_id is passed for DRIVER role logins so the token carries
+    the driver PK. Enables trip ownership checks without a DB lookup.
+    None for all non-DRIVER roles.
+
     Args:
         user_roles : list of active UserRole ORM instances
+        driver_id  : PK from drivers table — set for DRIVER role only
 
     Returns:
-        List of dicts with role_name, school_id, branch_id
+        List of dicts with role_name, school_id, branch_id, driver_id
     """
     return [
         {
             "role_name": role.role_name.value,
             "school_id": role.school_id,
             "branch_id": role.branch_id,
+            "driver_id": driver_id,
         }
         for role in user_roles
     ]
@@ -149,7 +159,16 @@ async def login(
     # A user with multiple roles (e.g. SCHOOL_ADMIN in two schools) gets all
     # assignments for the declared role embedded in the token. Assignments for
     # other roles are excluded.
-    roles_payload = _build_roles_payload(matching_roles)
+    #
+    # For DRIVER role: look up driver_id so the token carries the driver PK.
+    # This lets downstream trip endpoints verify ownership (start/end/cancel)
+    # without an extra DB round-trip on every action.
+    driver_id: int | None = None
+    if role == RoleName.DRIVER:
+        driver = await driver_repo.get_driver_by_user_id_or_none(db, user.user_id)
+        driver_id = driver.driver_id if driver else None
+
+    roles_payload = _build_roles_payload(matching_roles, driver_id=driver_id)
 
     # -- Step 6: Create access token ------------------------------------------
     access_token = create_access_token(
