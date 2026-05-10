@@ -1,7 +1,7 @@
 import math
 from typing import Generic, TypeVar
 
-from pydantic import BaseModel, ConfigDict, computed_field
+from pydantic import BaseModel, ConfigDict
 
 T = TypeVar("T")
 
@@ -31,13 +31,49 @@ class PaginatedResponse(BaseModel, Generic[T]):
 
 
 # -----------------------------------------------------------------------------
+# TenantResponse
+# Shared school + branch context embedded in any domain response that is
+# scoped to a branch. Import and inherit from this in domain response schemas
+# instead of re-declaring school_id / school_name / branch_id / branch_name
+# on every model.
+#
+# Usage:
+#   class BusResponse(TenantResponse):
+#       bus_id    : int
+#       bus_number: str
+#       ...
+#
+# The response stays flat — all tenant fields appear at the top level alongside
+# domain fields. No nested object on the client side.
+#
+# Backend: requires selectinload(Bus.school) + selectinload(Bus.branch) in the
+# repo query, and @property accessors on the ORM model to flatten the names:
+#
+#   @property
+#   def school_name(self) -> str:
+#       return self.school.school_name
+#
+#   @property
+#   def branch_name(self) -> str:
+#       return self.branch.branch_name
+# -----------------------------------------------------------------------------
+class TenantResponse(BaseModel):
+    """
+    Reusable school + branch context.
+    Inherit from this in any domain response scoped to a branch.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    school_id  : int
+    school_name: str
+    branch_id  : int
+    branch_name: str
+
+
+# -----------------------------------------------------------------------------
 # paginate()
 # Helper to build a PaginatedResponse from a list of items and a total count.
-# Called in every service list function — avoids repeating the pages calculation.
-#
-# Usage in service:
-#   items, total = await repo.get_all_schools(db, limit=page_size, offset=(page-1)*page_size)
-#   return paginate(items, total, page, page_size)
 # -----------------------------------------------------------------------------
 def paginate(
     items: list[T],
@@ -70,11 +106,6 @@ def paginate(
 # -----------------------------------------------------------------------------
 # pagination_params()
 # Helper to convert page + page_size into limit + offset for DB queries.
-# Enforces MAX_PAGE_SIZE from settings.
-#
-# Usage in service:
-#   limit, offset = pagination_params(page, page_size)
-#   items, total = await repo.get_all_schools(db, limit=limit, offset=offset)
 # -----------------------------------------------------------------------------
 def pagination_params(
     page: int,
