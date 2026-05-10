@@ -61,6 +61,30 @@ async def get_bus_by_bus_id_with_relations(
     return bus
 
 
+async def get_bus_detail(
+    db: AsyncSession,
+    bus_id: int,
+    school_id: int | None,
+) -> Bus | None:
+
+    stmt = (
+        select(Bus)
+        .options(
+            selectinload(Bus.school),
+            selectinload(Bus.branch),
+        )
+        .execution_options(populate_existing=True)
+        .where(
+            Bus.bus_id == bus_id,
+            Bus.school_id == school_id,
+        )
+    )
+
+    result = await db.execute(stmt)
+
+    return result.scalar_one_or_none()
+
+
 async def get_all_buses_by_branch(
     db: AsyncSession,
     school_id: int | None,

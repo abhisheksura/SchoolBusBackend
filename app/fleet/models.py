@@ -15,6 +15,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db.base import Base, TZDateTime
+from app.core.db.mixins.tenant_mixin import TenantInfoMixin
 
 if TYPE_CHECKING:
     from app.schools.models import School, Branch
@@ -30,7 +31,7 @@ if TYPE_CHECKING:
 #   - bus_number unique per school — same number allowed across schools
 #   - ondelete="RESTRICT" — soft-delete system, no cascade wipes
 # -----------------------------------------------------------------------------
-class Bus(Base):
+class Bus(TenantInfoMixin, Base):
     """ORM model for the buses table."""
 
     __tablename__ = "buses"
@@ -66,22 +67,6 @@ class Bus(Base):
         lazy="noload",
         primaryjoin="and_(Bus.branch_id == Branch.branch_id, Bus.school_id == Branch.school_id)",
     )
-
-    # -------------------------------------------------------------------------
-    # Computed properties
-    # Pydantic with from_attributes=True reads these as regular attributes.
-    # Only valid when school/branch are loaded via selectinload — calling these
-    # on a Bus fetched without relations raises AttributeError.
-    # -------------------------------------------------------------------------
-    @property
-    def school_name(self) -> str:
-        """Flattens bus.school.school_name for BusResponse serialization."""
-        return self.school.school_name
-
-    @property
-    def branch_name(self) -> str:
-        """Flattens bus.branch.branch_name for BusResponse serialization."""
-        return self.branch.branch_name
 
     __table_args__ = (
         ForeignKeyConstraint(
