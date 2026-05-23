@@ -4,7 +4,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.core.schemas import PaginatedResponse
+from app.core.schemas import PaginatedResponse, TenantResponse
 
 
 SchoolBranchField = Annotated[int, Field(gt=0, description="Must be a positive integer.")]
@@ -62,7 +62,7 @@ class DriverUpdate(BaseModel):
         return self
 
 
-class DriverResponse(BaseModel):
+class DriverResponse(TenantResponse):
     model_config = ConfigDict(from_attributes=True)
 
     driver_id     : int

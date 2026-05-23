@@ -42,22 +42,22 @@ async def get_driver(
 
 async def get_all_drivers(
     db: AsyncSession,
-    school_id: int,
-    branch_id: int,
+    school_id: int | None,
+    # branch_id: int,
     page: int,
     page_size: int,
     accessible_branch_ids: list[int] | None,
     active_only: bool = True,
 ) -> PaginatedDriverResponse:
     limit, offset = pagination_params(page, page_size, settings.MAX_PAGE_SIZE)
-    if accessible_branch_ids is None:
-        drivers, total = await driver_repo.get_all_drivers_by_branch(
-            db, school_id, branch_id, limit, offset, active_only
-        )
-    else:
-        drivers, total = await driver_repo.get_drivers_by_branch_ids(
-            db, school_id, accessible_branch_ids, limit, offset, active_only
-        )
+    drivers, total = await driver_repo.get_all_drivers(
+        db=db,
+        school_id=school_id,
+        branch_ids=accessible_branch_ids,
+        limit=limit,
+        offset=offset,
+        active_only=active_only,
+    )
     return paginate(
         items=[DriverResponse.model_validate(d) for d in drivers],
         total=total, page=page, page_size=page_size,

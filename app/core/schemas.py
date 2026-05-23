@@ -66,9 +66,9 @@ class TenantResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     school_id  : int
-    school_name: str
+    school_name: str | None = None
     branch_id  : int
-    branch_name: str
+    branch_name: str | None = None
 
 
 # -----------------------------------------------------------------------------

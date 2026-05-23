@@ -1,5 +1,6 @@
 from sqlalchemy import select, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.drivers.models import Driver
 from app.core.exceptions import DriverNotFoundError
@@ -12,7 +13,12 @@ async def get_driver_by_driver_id(
     branch_id: int,
 ) -> Driver:
     result = await db.execute(
-        select(Driver).where(
+        select(Driver)
+        .options(
+            selectinload(Driver.school),
+            selectinload(Driver.branch),
+        )
+        .where(
             Driver.driver_id == driver_id,
             Driver.school_id == school_id,
             Driver.branch_id == branch_id,
@@ -24,43 +30,48 @@ async def get_driver_by_driver_id(
     return driver
 
 
-async def get_all_drivers_by_branch(
+async def get_all_drivers(
     db: AsyncSession,
-    school_id: int,
-    branch_id: int,
+    school_id: int | None,
+    branch_ids: list[int] | None,
     limit: int,
     offset: int,
     active_only: bool = True,
 ) -> tuple[list[Driver], int]:
-    query = select(Driver).where(
-        Driver.school_id == school_id,
-        Driver.branch_id == branch_id,
-    )
+
+    query = select(Driver).options(
+            selectinload(Driver.school),
+            selectinload(Driver.branch),
+        )
+
+    if school_id is not None:
+        query = query.where(
+            Driver.school_id == school_id
+        )
+
+    if branch_ids is not None:
+        query = query.where(
+            Driver.branch_id.in_(branch_ids)
+        )
+
     if active_only:
-        query = query.where(Driver.is_active == True)
-    total = await db.scalar(select(func.count()).select_from(query.subquery()))
-    result = await db.execute(query.order_by(Driver.first_name).limit(limit).offset(offset))
-    return list(result.scalars().all()), total or 0
+        query = query.where(
+            Driver.is_active == True
+        )
 
-
-async def get_drivers_by_branch_ids(
-    db: AsyncSession,
-    school_id: int,
-    branch_ids: list[int],
-    limit: int,
-    offset: int,
-    active_only: bool = True,
-) -> tuple[list[Driver], int]:
-    query = select(Driver).where(
-        Driver.school_id == school_id,
-        Driver.branch_id.in_(branch_ids),
+    total = await db.scalar(
+        select(func.count()).select_from(
+            query.subquery()
+        )
     )
-    if active_only:
-        query = query.where(Driver.is_active == True)
-    total = await db.scalar(select(func.count()).select_from(query.subquery()))
-    result = await db.execute(query.order_by(Driver.first_name).limit(limit).offset(offset))
-    return list(result.scalars().all()), total or 0
 
+    result = await db.execute(
+        query.order_by(Driver.first_name)
+        .limit(limit)
+        .offset(offset)
+    )
+
+    return list(result.scalars().all()), total or 0
 
 async def create_driver(
     db: AsyncSession,
@@ -83,9 +94,12 @@ async def create_driver(
     )
     db.add(driver)
     await db.flush()
-    await db.refresh(driver)
-    return driver
-
+    return await get_driver_by_driver_id(
+        db=db,
+        driver_id=driver.driver_id,
+        school_id=school_id,
+        branch_id=branch_id,
+    )
 
 async def update_driver_by_driver_id(
     db: AsyncSession,
@@ -96,17 +110,28 @@ async def update_driver_by_driver_id(
 ) -> Driver:
     values = dict(kwargs)
     values["updated_at"] = func.now()
+
     result = await db.execute(
         update(Driver)
-        .where(Driver.driver_id == driver_id, Driver.school_id == school_id, Driver.branch_id == branch_id)
+        .where(
+            Driver.driver_id == driver_id,
+            Driver.school_id == school_id,
+            Driver.branch_id == branch_id,
+        )
         .values(**values)
-        .returning(Driver)
     )
+
     await db.flush()
-    driver = result.scalar_one_or_none()
-    if not driver:
+
+    if result.rowcount == 0:
         raise DriverNotFoundError(identifier=driver_id)
-    return driver
+
+    return await get_driver_by_driver_id(
+        db=db,
+        driver_id=driver_id,
+        school_id=school_id,
+        branch_id=branch_id,
+    )
 
 
 async def deactivate_driver_by_driver_id(
@@ -117,15 +142,28 @@ async def deactivate_driver_by_driver_id(
 ) -> Driver:
     result = await db.execute(
         update(Driver)
-        .where(Driver.driver_id == driver_id, Driver.school_id == school_id, Driver.branch_id == branch_id)
-        .values(is_active=False, updated_at=func.now())
-        .returning(Driver)
+        .where(
+            Driver.driver_id == driver_id,
+            Driver.school_id == school_id,
+            Driver.branch_id == branch_id,
+        )
+        .values(
+            is_active=False,
+            updated_at=func.now(),
+        )
     )
+
     await db.flush()
-    driver = result.scalar_one_or_none()
-    if not driver:
+
+    if result.rowcount == 0:
         raise DriverNotFoundError(identifier=driver_id)
-    return driver
+
+    return await get_driver_by_driver_id(
+        db=db,
+        driver_id=driver_id,
+        school_id=school_id,
+        branch_id=branch_id,
+    )
 
  
 async def get_driver_by_user_id_or_none(
