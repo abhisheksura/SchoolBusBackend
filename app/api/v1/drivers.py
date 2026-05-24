@@ -114,13 +114,12 @@ async def get_driver(
 async def update_driver(
     driver_id: int,
     payload  : DriverUpdate,
-    school_id: int = Query(...),
-    branch_id: int = Query(...),
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = DriverAdminRequired,
 ) -> DriverResponse:
     return await driver_service.update_driver(
-        db=db, driver_id=driver_id, school_id=school_id, branch_id=branch_id, payload=payload,
+        db=db, driver_id=driver_id, payload=payload,
+        current_user=current_user
     )
 
 

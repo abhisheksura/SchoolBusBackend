@@ -9,8 +9,6 @@ from app.core.exceptions import DriverNotFoundError
 async def get_driver_by_driver_id(
     db: AsyncSession,
     driver_id: int,
-    school_id: int,
-    branch_id: int,
 ) -> Driver:
     result = await db.execute(
         select(Driver)
@@ -20,8 +18,6 @@ async def get_driver_by_driver_id(
         )
         .where(
             Driver.driver_id == driver_id,
-            Driver.school_id == school_id,
-            Driver.branch_id == branch_id,
         )
     )
     driver = result.scalar_one_or_none()
@@ -104,8 +100,6 @@ async def create_driver(
 async def update_driver_by_driver_id(
     db: AsyncSession,
     driver_id: int,
-    school_id: int,
-    branch_id: int,
     **kwargs,
 ) -> Driver:
     values = dict(kwargs)
@@ -115,8 +109,6 @@ async def update_driver_by_driver_id(
         update(Driver)
         .where(
             Driver.driver_id == driver_id,
-            Driver.school_id == school_id,
-            Driver.branch_id == branch_id,
         )
         .values(**values)
     )
@@ -129,8 +121,6 @@ async def update_driver_by_driver_id(
     return await get_driver_by_driver_id(
         db=db,
         driver_id=driver_id,
-        school_id=school_id,
-        branch_id=branch_id,
     )
 
 
