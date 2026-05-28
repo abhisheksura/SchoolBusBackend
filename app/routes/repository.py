@@ -181,6 +181,47 @@ async def deactivate_route_by_route_id(
 # =============================================================================
 # Stop Queries
 # =============================================================================
+async def get_all_stops(
+    db: AsyncSession,
+    school_id: int | None,
+    branch_ids: list[int] | None,
+    limit: int,
+    offset: int,
+    active_only: bool = True,
+) -> tuple[list[Stop], int]:
+
+    query = select(Stop).options(
+        selectinload(Stop.school),
+        selectinload(Stop.branch),
+    )
+    if school_id is not None:
+        query = query.where(
+            Stop.school_id == school_id
+        )
+
+    if branch_ids is not None:
+        query = query.where(
+            Stop.branch_id.in_(branch_ids)
+        )
+
+    if active_only:
+        query = query.where(
+            Stop.is_active == True
+        )
+
+    total = await db.scalar(
+        select(func.count()).select_from(
+            query.subquery()
+        )
+    )
+
+    result = await db.execute(
+        query.order_by(Stop.stop_name)
+        .limit(limit)
+        .offset(offset)
+    )
+
+    return list(result.scalars().all()), total or 0
 
 async def get_stop_by_stop_id(
     db: AsyncSession,

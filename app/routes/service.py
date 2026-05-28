@@ -215,8 +215,8 @@ async def get_stop(
 
 async def get_all_stops(
     db: AsyncSession,
-    school_id: int,
-    branch_id: int,
+    school_id: int | None,
+    # branch_id: int,
     page: int,
     page_size: int,
     accessible_branch_ids: list[int] | None,
@@ -225,17 +225,14 @@ async def get_all_stops(
     """Fetch paginated stops for a branch, filtered by caller's scope."""
     limit, offset = pagination_params(page, page_size, settings.MAX_PAGE_SIZE)
 
-    if accessible_branch_ids is None:
-        stops, total = await route_repo.get_all_stops_by_branch(
-            db=db, school_id=school_id, branch_id=branch_id,
-            limit=limit, offset=offset, active_only=active_only,
-        )
-    else:
-        stops, total = await route_repo.get_stops_by_branch_ids(
-            db=db, school_id=school_id, branch_ids=accessible_branch_ids,
-            limit=limit, offset=offset, active_only=active_only,
-        )
-
+    stops, total = await route_repo.get_all_stops(
+        db=db,
+        school_id=school_id,
+        branch_ids=accessible_branch_ids,
+        limit=limit,
+        offset=offset,
+        active_only=active_only,
+    )
     return paginate(
         items=[StopResponse.model_validate(s) for s in stops],
         total=total, page=page, page_size=page_size,

@@ -4,7 +4,7 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.core.enums import TripType
-from app.core.schemas import PaginatedResponse
+from app.core.schemas import PaginatedResponse, TenantResponse
 
 
 # =============================================================================
@@ -127,7 +127,7 @@ class StopUpdate(BaseModel):
         return self
 
 
-class StopResponse(BaseModel):
+class StopResponse(TenantResponse):
     model_config = ConfigDict(from_attributes=True)
 
     stop_id   : int

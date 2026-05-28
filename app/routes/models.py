@@ -17,6 +17,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db.base import Base, TZDateTime
+from app.core.db.mixins.tenant_mixin import TenantInfoMixin
 from app.core.enums import TripType
 
 
@@ -77,7 +78,7 @@ class Route(Base):
 #   - latitude / longitude validated by DB CHECK constraints
 #   - ondelete="RESTRICT" — a stop in use by route_stops cannot be deleted
 # -----------------------------------------------------------------------------
-class Stop(Base):
+class Stop(TenantInfoMixin, Base):
     __tablename__ = "stops"
 
     stop_id   : Mapped[int]          = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -105,6 +106,25 @@ class Stop(Base):
         Index("idx_stops_lat_lng", "latitude", "longitude"),
     )
 
+    # -------------------------------------------------------------------------
+    # Relationships — lazy="noload" enforces explicit selectinload in repo.
+    # Accessing without loading raises an error rather than triggering a silent
+    # N+1 sync query (which would fail in async context anyway).
+    # TenantInfoMixin.school_name / .branch_name use getattr — safe if not loaded
+    # (returns None), so list endpoints that skip joining are fine.
+    # -------------------------------------------------------------------------
+    school: Mapped["School"] = relationship(  # type: ignore[name-defined]
+        "School",
+        foreign_keys=[school_id],
+        lazy="noload",
+    )
+    branch: Mapped["Branch"] = relationship(  # type: ignore[name-defined]
+        "Branch",
+        primaryjoin="and_(Stop.branch_id == Branch.branch_id, Stop.school_id == Branch.school_id)",
+        foreign_keys="[Stop.branch_id, Stop.school_id]",
+        lazy="noload",
+        viewonly=True,
+    )
     # cascade="save-update, merge" only — soft-delete system
     route_stops: Mapped[list["RouteStop"]] = relationship(
         "RouteStop",
