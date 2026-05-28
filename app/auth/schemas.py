@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, mo
 
 from app.core.config import settings
 from app.core.enums import RoleName
+from app.core.schemas import TenantResponse
 
 
 # =============================================================================
@@ -127,7 +128,7 @@ class LogoutRequest(BaseModel):
 # from SQLAlchemy ORM model instances.
 # =============================================================================
 
-class RoleResponse(BaseModel):
+class RoleResponse(TenantResponse):
     """Single role assignment with its school/branch scope."""
 
     model_config = ConfigDict(from_attributes=True)

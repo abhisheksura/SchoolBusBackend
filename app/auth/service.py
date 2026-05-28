@@ -351,7 +351,6 @@ async def get_me(
         UserNotFoundError : if no user exists with the given user_id
     """
     user = await auth_repo.get_user_with_roles_by_user_id(db, user_id)
-
     return MeResponse(
         user_id=user.user_id,
         user_name=user.user_name,
@@ -366,6 +365,8 @@ async def get_me(
                 role_name=role.role_name,
                 school_id=role.school_id,
                 branch_id=role.branch_id,
+                school_name=role.school_name,
+                branch_name=role.branch_name,
                 is_active=role.is_active,
                 assigned_at=role.assigned_at,
             )

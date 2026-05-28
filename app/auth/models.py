@@ -17,9 +17,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import ENUM
 
 from app.core.db.base import Base, TZDateTime
+from app.core.db.mixins.tenant_mixin import TenantInfoMixin
 from app.core.enums import RoleName
 from app.core.utils import utcnow
-
 
 # -----------------------------------------------------------------------------
 # User
@@ -134,7 +134,7 @@ class Role(Base):
 #   SCHOOL_ADMIN → school_id IS NOT NULL, branch_id IS NULL
 #   others       → school_id IS NOT NULL, branch_id IS NOT NULL
 # -----------------------------------------------------------------------------
-class UserRole(Base):
+class UserRole(TenantInfoMixin, Base):
     __tablename__ = "user_roles"
 
     user_role_id: Mapped[int] = mapped_column(
@@ -208,7 +208,14 @@ class UserRole(Base):
         back_populates="user_roles",
         lazy="noload",
     )
-
+    school: Mapped["School | None"] = relationship(
+        "School",
+        lazy="noload",
+    )
+    branch: Mapped["Branch | None"] = relationship(
+        "Branch",
+        lazy="noload",
+    )
     def __repr__(self) -> str:
         return (
             f"<UserRole user_role_id={self.user_role_id} "

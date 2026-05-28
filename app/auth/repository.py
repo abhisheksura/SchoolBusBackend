@@ -105,10 +105,14 @@ async def get_user_with_roles_by_user_id(
     Raises:
         UserNotFoundError : if no user exists with the given user_id
     """
+    roles_loader = selectinload(
+        User.user_roles.and_(UserRole.is_active.is_(True))
+    )
     result = await db.execute(
         select(User)
         .options(
-            selectinload(User.user_roles.and_(UserRole.is_active == True))
+            roles_loader.selectinload(UserRole.school),
+            roles_loader.selectinload(UserRole.branch),
         )
         .where(User.user_id == user_id)
     )
