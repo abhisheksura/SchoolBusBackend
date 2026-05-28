@@ -31,7 +31,7 @@ from app.core.enums import TripType
 #   - route_code is unique per (branch_id, school_id)
 #   - ondelete="RESTRICT" — soft-delete system, no hard-delete cascade
 # -----------------------------------------------------------------------------
-class Route(Base):
+class Route(TenantInfoMixin, Base):
     __tablename__ = "routes"
 
     route_id   : Mapped[int]        = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -63,7 +63,18 @@ class Route(Base):
         cascade="save-update, merge",
         lazy="noload",
     )
-
+    school: Mapped["School"] = relationship(  # type: ignore[name-defined]
+        "School",
+        foreign_keys=[school_id],
+        lazy="noload",
+    )
+    branch: Mapped["Branch"] = relationship(  # type: ignore[name-defined]
+        "Branch",
+        primaryjoin="and_(Route.branch_id == Branch.branch_id, Route.school_id == Branch.school_id)",
+        foreign_keys="[Route.branch_id, Route.school_id]",
+        lazy="noload",
+        viewonly=True,
+    )
     def __repr__(self) -> str:
         return f"<Route route_id={self.route_id} code={self.route_code} name={self.route_name}>"
 

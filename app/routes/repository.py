@@ -35,6 +35,47 @@ async def get_route_by_route_id(
         raise RouteNotFoundError(identifier=route_id)
     return route
 
+async def get_all_routes(
+    db: AsyncSession,
+    school_id: int | None,
+    branch_ids: list[int] | None,
+    limit: int,
+    offset: int,
+    active_only: bool = True,
+) -> tuple[list[Route], int]:
+
+    query = select(Route).options(
+        selectinload(Route.school),
+        selectinload(Route.branch),
+    )
+    if school_id is not None:
+        query = query.where(
+            Route.school_id == school_id
+        )
+
+    if branch_ids is not None:
+        query = query.where(
+            Route.branch_id.in_(branch_ids)
+        )
+
+    if active_only:
+        query = query.where(
+            Route.is_active == True
+        )
+
+    total = await db.scalar(
+        select(func.count()).select_from(
+            query.subquery()
+        )
+    )
+
+    result = await db.execute(
+        query.order_by(Route.route_name)
+        .limit(limit)
+        .offset(offset)
+    )
+
+    return list(result.scalars().all()), total or 0
 
 async def get_route_with_stops_by_route_id(
     db: AsyncSession,

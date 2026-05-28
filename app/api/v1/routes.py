@@ -60,20 +60,41 @@ async def create_route(
     description="Fetch paginated routes filtered by caller's branch scope.",
 )
 async def get_all_routes(
-    school_id  : int  = Query(..., description="School ID"),
-    branch_id  : int  = Query(..., description="Branch ID"),
+    school_id  : int | None = Query(default=None, description="School ID"),
+    branch_id  : int | None = Query(default=None, description="Branch ID"),
     page       : int  = Query(default=1, ge=1),
     page_size  : int  = Query(default=settings.DEFAULT_PAGE_SIZE, ge=1, le=settings.MAX_PAGE_SIZE),
     active_only: bool = Query(default=True),
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = AnyAuthenticated,
 ) -> PaginatedRouteResponse:
-    if not current_user.has_any_role(RoleName.SUPER_ADMIN, RoleName.SCHOOL_ADMIN):
+    
+    # SUPER ADMIN
+    if current_user.has_role(RoleName.SUPER_ADMIN):
+        school_id = None
+        accessible_branch_ids = None
+
+    # SCHOOL ADMIN
+    elif current_user.has_role(RoleName.SCHOOL_ADMIN):
+        school_id = current_user.school_id
+        accessible_branch_ids = (
+            current_user.get_accessible_branch_ids(
+                school_id
+            )
+        )
+
+    # BRANCH ADMIN
+    else:
+        school_id = current_user.school_id
+        accessible_branch_ids = [
+            current_user.branch_id
+        ]
         active_only = True
+    
     return await route_service.get_all_routes(
         db=db,
         school_id=school_id,
-        branch_id=branch_id,
+        # branch_id=branch_id,
         page=page,
         page_size=page_size,
         accessible_branch_ids=current_user.get_accessible_branch_ids(school_id),

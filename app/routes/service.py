@@ -112,7 +112,7 @@ async def get_route_detail(
 async def get_all_routes(
     db: AsyncSession,
     school_id: int,
-    branch_id: int,
+    # branch_id: int,
     page: int,
     page_size: int,
     accessible_branch_ids: list[int] | None,
@@ -121,16 +121,14 @@ async def get_all_routes(
     """Fetch paginated routes for a branch, filtered by caller's scope."""
     limit, offset = pagination_params(page, page_size, settings.MAX_PAGE_SIZE)
 
-    if accessible_branch_ids is None:
-        routes, total = await route_repo.get_all_routes_by_branch(
-            db=db, school_id=school_id, branch_id=branch_id,
-            limit=limit, offset=offset, active_only=active_only,
-        )
-    else:
-        routes, total = await route_repo.get_routes_by_branch_ids(
-            db=db, school_id=school_id, branch_ids=accessible_branch_ids,
-            limit=limit, offset=offset, active_only=active_only,
-        )
+    routes, total = await route_repo.get_all_routes(
+        db=db,
+        school_id=school_id,
+        branch_ids=accessible_branch_ids,
+        limit=limit,
+        offset=offset,
+        active_only=active_only,
+    )
 
     return paginate(
         items=[RouteResponse.model_validate(r) for r in routes],
