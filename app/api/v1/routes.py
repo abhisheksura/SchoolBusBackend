@@ -19,6 +19,7 @@ from app.routes.schemas import (
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.enums import RoleName, TripType
+from app.core.scope import validate_scope_access
 from app.api.v1.dependencies import (
     AnyAuthenticated,
     CurrentUser,
@@ -69,35 +70,21 @@ async def get_all_routes(
     current_user: CurrentUser = AnyAuthenticated,
 ) -> PaginatedRouteResponse:
     
-    # SUPER ADMIN
-    if current_user.has_role(RoleName.SUPER_ADMIN):
-        school_id = None
-        accessible_branch_ids = None
-
-    # SCHOOL ADMIN
-    elif current_user.has_role(RoleName.SCHOOL_ADMIN):
-        school_id = current_user.school_id
-        accessible_branch_ids = (
-            current_user.get_accessible_branch_ids(
-                school_id
-            )
-        )
-
-    # BRANCH ADMIN
-    else:
-        school_id = current_user.school_id
-        accessible_branch_ids = [
-            current_user.branch_id
-        ]
+    if not current_user.has_any_role(RoleName.SUPER_ADMIN, RoleName.SCHOOL_ADMIN):
         active_only = True
-    
+
+    validate_scope_access(
+        current_user=current_user,
+        school_id=school_id,
+        branch_id=branch_id,
+    )
     return await route_service.get_all_routes(
         db=db,
         school_id=school_id,
-        # branch_id=branch_id,
+        branch_id=branch_id,
         page=page,
         page_size=page_size,
-        accessible_branch_ids=current_user.get_accessible_branch_ids(school_id),
+        # accessible_branch_ids=current_user.get_accessible_branch_ids(school_id),
         active_only=active_only,
     )
 
@@ -111,8 +98,8 @@ async def get_all_routes(
 )
 async def get_route(
     route_id : int,
-    school_id: int = Query(...),
-    branch_id: int = Query(...),
+    school_id: int | None = Query(default=None, description="School ID"),
+    branch_id: int | None = Query(default=None, description="Branch ID"),
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = AnyAuthenticated,
 ) -> RouteResponse:
@@ -121,7 +108,7 @@ async def get_route(
         route_id=route_id,
         school_id=school_id,
         branch_id=branch_id,
-        accessible_branch_ids=current_user.get_accessible_branch_ids(school_id),
+        # accessible_branch_ids=current_user.get_accessible_branch_ids(school_id),
     )
 
 
@@ -366,7 +353,6 @@ async def get_route_stops(
         trip_type=trip_type,
         accessible_branch_ids=current_user.get_accessible_branch_ids(school_id),
     )
-
 
 @router.post(
     "/routes/{route_id}/stops",

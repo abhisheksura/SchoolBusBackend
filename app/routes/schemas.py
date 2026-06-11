@@ -190,6 +190,7 @@ class RouteStopResponse(BaseModel):
     route_stop_id : int
     route_id      : int
     stop_id       : int
+    stop_name     : str
     school_id     : int
     branch_id     : int
     trip_type     : TripType

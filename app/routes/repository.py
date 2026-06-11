@@ -19,18 +19,30 @@ from app.core.exceptions import (
 async def get_route_by_route_id(
     db: AsyncSession,
     route_id: int,
-    school_id: int,
-    branch_id: int,
+    school_id: int | None,
+    branch_id: int | None,
 ) -> Route:
     """Fetch a route scoped to branch. Raises RouteNotFoundError if not found."""
-    result = await db.execute(
-        select(Route).where(
-            Route.route_id == route_id,
-            Route.school_id == school_id,
-            Route.branch_id == branch_id,
-        )
+    # 1. Start with the base query and preload relationships
+    query = select(Route).options(
+        selectinload(Route.school),
+        selectinload(Route.branch),
     )
+    # 2. Base condition is always the primary route identifier
+    query = query.where(Route.route_id == route_id)
+
+    # 3. Apply optional multi-tenant filters dynamically to prevent 'IS NULL' errors
+    if school_id is not None:
+        query = query.where(Route.school_id == school_id)
+
+    if branch_id is not None:
+        query = query.where(Route.branch_id == branch_id)
+
+    # 4. Execute the query
+    result = await db.execute(query)
     route = result.scalar_one_or_none()
+
+    # 5. Handle missing record safely
     if not route:
         raise RouteNotFoundError(identifier=route_id)
     return route
@@ -38,7 +50,7 @@ async def get_route_by_route_id(
 async def get_all_routes(
     db: AsyncSession,
     school_id: int | None,
-    branch_ids: list[int] | None,
+    branch_id: int | None,
     limit: int,
     offset: int,
     active_only: bool = True,
@@ -53,9 +65,9 @@ async def get_all_routes(
             Route.school_id == school_id
         )
 
-    if branch_ids is not None:
+    if branch_id is not None:
         query = query.where(
-            Route.branch_id.in_(branch_ids)
+            Route.branch_id == branch_id
         )
 
     if active_only:
@@ -460,7 +472,7 @@ async def get_route_stops_by_route_and_trip_type(
             RouteStop.route_id == route_id,
             RouteStop.school_id == school_id,
             RouteStop.branch_id == branch_id,
-            RouteStop.trip_type == trip_type.value,
+            RouteStop.trip_type == trip_type,
         )
         .order_by(RouteStop.stop_sequence)
     )
@@ -476,6 +488,7 @@ async def get_all_route_stops_by_route_id(
     """Fetch all route stop entries for a route (both trip_types), ordered by trip_type then sequence."""
     result = await db.execute(
         select(RouteStop)
+        .options(selectinload(RouteStop.stop))
         .where(
             RouteStop.route_id == route_id,
             RouteStop.school_id == school_id,

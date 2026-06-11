@@ -57,12 +57,10 @@ async def get_route(
     route_id: int,
     school_id: int,
     branch_id: int,
-    accessible_branch_ids: list[int] | None,
+    # accessible_branch_ids: list[int] | None,
 ) -> RouteResponse:
     """Fetch a single route. Scope check BEFORE DB hit."""
-    if accessible_branch_ids is not None and branch_id not in accessible_branch_ids:
-        raise RouteNotFoundError(identifier=route_id)
-
+    print("Hello")
     route = await route_repo.get_route_by_route_id(db, route_id, school_id, branch_id)
     return RouteResponse.model_validate(route)
 
@@ -112,10 +110,10 @@ async def get_route_detail(
 async def get_all_routes(
     db: AsyncSession,
     school_id: int,
-    # branch_id: int,
+    branch_id: int,
     page: int,
     page_size: int,
-    accessible_branch_ids: list[int] | None,
+    # accessible_branch_ids: list[int] | None,
     active_only: bool = True,
 ) -> PaginatedRouteResponse:
     """Fetch paginated routes for a branch, filtered by caller's scope."""
@@ -124,7 +122,7 @@ async def get_all_routes(
     routes, total = await route_repo.get_all_routes(
         db=db,
         school_id=school_id,
-        branch_ids=accessible_branch_ids,
+        branch_id=branch_id,
         limit=limit,
         offset=offset,
         active_only=active_only,

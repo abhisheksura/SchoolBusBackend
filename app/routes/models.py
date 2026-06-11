@@ -19,7 +19,12 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.db.base import Base, TZDateTime
 from app.core.db.mixins.tenant_mixin import TenantInfoMixin
 from app.core.enums import TripType
+from enum import Enum
+from sqlalchemy import Enum as SQLEnum
 
+class TripType(str, Enum):
+    PICKUP = "PICKUP"
+    DROPOFF = "DROPOFF"
 
 # -----------------------------------------------------------------------------
 # Route
@@ -169,8 +174,12 @@ class RouteStop(Base):
     stop_id       : Mapped[int]          = mapped_column(Integer, ForeignKey("stops.stop_id", ondelete="RESTRICT"), nullable=False)
     school_id     : Mapped[int]          = mapped_column(Integer, ForeignKey("schools.school_id", ondelete="RESTRICT"), nullable=False)
     branch_id     : Mapped[int]          = mapped_column(Integer, nullable=False)
-    trip_type     : Mapped[TripType]     = mapped_column(
-        String(20),
+    trip_type: Mapped[TripType]          = mapped_column(
+        SQLEnum(
+            TripType,
+            name="trip_type_enum",
+            native_enum=True,
+        ),
         nullable=False,
     )
     stop_sequence : Mapped[int]          = mapped_column(Integer, nullable=False)
@@ -201,6 +210,10 @@ class RouteStop(Base):
         back_populates="route_stops",
         lazy="noload",
     )
+
+    @property
+    def stop_name(self) -> str:
+        return self.stop.stop_name
 
     def __repr__(self) -> str:
         return (
