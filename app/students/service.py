@@ -1,6 +1,5 @@
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.students import repository as student_repo
 from app.students.schemas import (
     LeaveRequestCreate,
@@ -30,6 +29,7 @@ from app.core.exceptions import (
     StudentNotFoundError,
 )
 from app.core.schemas import paginate, pagination_params
+from app.core.utils import get_tenant_names, to_tenant_response
 
 
 # =============================================================================
@@ -45,16 +45,11 @@ async def create_student(
     Checks user_id is not already linked to another student.
     Role check (BRANCH_ADMIN+) enforced at router.
     """
-    existing = await student_repo.get_student_by_user_id_or_none(db, payload.user_id)
-    if existing:
-        raise DuplicateEntryError(field="user_id", value=str(payload.user_id))
-
     try:
         student = await student_repo.create_student(
             db=db,
             school_id=payload.school_id,
             branch_id=payload.branch_id,
-            user_id=payload.user_id,
             first_name=payload.first_name,
             last_name=payload.last_name,
             admission_number=payload.admission_number,
@@ -87,26 +82,55 @@ async def get_all_students(
     branch_id: int,
     page: int,
     page_size: int,
-    accessible_branch_ids: list[int] | None,
+    # accessible_branch_ids: list[int] | None,
     active_only: bool = True,
 ) -> PaginatedStudentResponse:
-    """Fetch paginated students filtered by caller's branch scope."""
+    """
+    Fetch paginated students with zero DB join overhead.
+    Tenant details are injected via an optimized, cached mapper layer.
+    """
+    # 1. Calculate pagination windows
     limit, offset = pagination_params(page, page_size, settings.MAX_PAGE_SIZE)
 
-    if accessible_branch_ids is None:
-        students, total = await student_repo.get_all_students_by_branch(
-            db=db, school_id=school_id, branch_id=branch_id,
-            limit=limit, offset=offset, active_only=active_only,
-        )
-    else:
-        students, total = await student_repo.get_students_by_branch_ids(
-            db=db, school_id=school_id, branch_ids=accessible_branch_ids,
-            limit=limit, offset=offset, active_only=active_only,
+    # 2. Fetch data and row counts seamlessly from the optimized repo
+    students, total = await student_repo.get_all_students(
+        db=db,
+        school_id=school_id,
+        branch_id=branch_id,
+        limit=limit,
+        offset=offset,
+        active_only=active_only,
+    )
+
+    # 3. Short-circuit: skip cache parsing entirely if page is empty
+    if not students:
+        return paginate(
+            items=[],
+            total=total,
+            page=page,
+            page_size=page_size,
         )
 
+    # 4. Fetch the tenant names *once* per request block (0ms response if cached)
+    school_name, branch_name = await get_tenant_names(db, school_id, branch_id)
+
+    # 5. Map rows efficiently into Pydantic passing string references
+    mapped_items = [
+        to_tenant_response(
+            s,
+            StudentResponse,
+            school_name=school_name,
+            branch_name=branch_name
+        )
+        for s in students
+    ]
+
+    # 6. Return standard paginated payload structure
     return paginate(
-        items=[StudentResponse.model_validate(s) for s in students],
-        total=total, page=page, page_size=page_size,
+        items=mapped_items,
+        total=total,
+        page=page,
+        page_size=page_size,
     )
 
 

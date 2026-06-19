@@ -1,6 +1,6 @@
-from sqlalchemy import select, update, delete, func
+from sqlalchemy import select, update, delete, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from sqlalchemy.orm import selectinload
 from app.students.models import Parent, Student, StudentLeaveRequest, StudentParent
 from app.core.enums import LeaveRequestStatus
 from app.core.exceptions import (
@@ -88,11 +88,49 @@ async def get_students_by_branch_ids(
     return list(result.scalars().all()), total or 0
 
 
+async def get_all_students(
+    db: AsyncSession,
+    school_id: int | None,
+    branch_id: int | None,
+    limit: int,
+    offset: int,
+    active_only: bool = True,
+) -> tuple[list[Student], int]:
+    """
+    DECOUPLED & OPTIMIZED: Completely removed DB joins for school/branch names.
+    Now yields pure Student objects, delegating string enrichment to the service/cache.
+    """
+    # 1. Build common filter conditions
+    filters = []
+    if school_id is not None:
+        filters.append(Student.school_id == school_id)
+    if branch_id is not None:
+        filters.append(Student.branch_id == branch_id)
+    if active_only:
+        filters.append(Student.is_active == True)
+
+    # 2. Optimized direct Count (No subqueries, no string joins evaluated)
+    total = await db.scalar(
+        select(func.count(Student.student_id)).where(and_(*filters))
+    ) or 0
+
+    if total == 0:
+        return [], 0
+
+    # 3. Clean query fetching ONLY what this module owns
+    query = select(Student).where(and_(*filters))
+
+    result = await db.execute(
+        query.order_by(Student.student_id)
+        .limit(limit)
+        .offset(offset)
+    )
+    return list(result.scalars().all()), total
+
 async def create_student(
     db: AsyncSession,
     school_id: int,
     branch_id: int,
-    user_id: int,
     first_name: str,
     last_name: str | None = None,
     admission_number: str | None = None,
@@ -103,7 +141,6 @@ async def create_student(
     student = Student(
         school_id=school_id,
         branch_id=branch_id,
-        user_id=user_id,
         first_name=first_name,
         last_name=last_name,
         admission_number=admission_number,

@@ -5,7 +5,7 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 from app.core.enums import LeaveRequestStatus, LEAVE_STATUS_TRANSITIONS
-from app.core.schemas import PaginatedResponse
+from app.core.schemas import PaginatedResponse, TenantResponse
 
 
 # =============================================================================
@@ -38,7 +38,7 @@ class StudentCreate(BaseModel):
 
     school_id       : SchoolBranchField
     branch_id       : SchoolBranchField
-    user_id         : int            = Field(gt=0, description="user_id of the student's login account.")
+    # user_id         : int            = Field(gt=0, description="user_id of the student's login account.")
     first_name      : str            = Field(min_length=1, max_length=100)
     last_name       : str | None     = Field(default=None, max_length=100)
     admission_number: str | None     = Field(default=None, max_length=50)
@@ -75,15 +75,17 @@ class StudentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     student_id      : int
-    school_id       : int
-    branch_id       : int
-    user_id         : int
+    user_id         : int | None
     first_name      : str
     last_name       : str | None
     admission_number: str | None
     grade           : str | None
     section         : str | None
     is_active       : bool
+    school_id       : int
+    school_name     : str | None = None
+    branch_id       : int
+    branch_name     : str | None = None
     created_at      : datetime
     updated_at      : datetime
 

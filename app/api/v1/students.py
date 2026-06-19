@@ -79,7 +79,6 @@ async def get_all_students(
         branch_id=branch_id,
         page=page,
         page_size=page_size,
-        accessible_branch_ids=current_user.get_accessible_branch_ids(school_id),
         active_only=active_only,
     )
 

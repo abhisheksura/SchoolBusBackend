@@ -62,7 +62,18 @@ class Student(Base):
         ),
         Index("idx_students_school_branch", "school_id", "branch_id"),
     )
-
+    school: Mapped["School"] = relationship(  # type: ignore[name-defined]
+        "School",
+        foreign_keys=[school_id],
+        lazy="noload",
+    )
+    branch: Mapped["Branch"] = relationship(  # type: ignore[name-defined]
+        "Branch",
+        primaryjoin="and_(Student.branch_id == Branch.branch_id, Student.school_id == Branch.school_id)",
+        foreign_keys="[Student.branch_id, Student.school_id]",
+        lazy="noload",
+        viewonly=True,
+    )
     # cascade="save-update, merge" only — soft-delete system
     student_parents: Mapped[list["StudentParent"]] = relationship(
         "StudentParent",
