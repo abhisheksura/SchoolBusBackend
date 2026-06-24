@@ -210,11 +210,20 @@ class UserRole(TenantInfoMixin, Base):
     )
     school: Mapped["School | None"] = relationship(
         "School",
+        foreign_keys=[school_id],
         lazy="noload",
     )
     branch: Mapped["Branch | None"] = relationship(
         "Branch",
+        primaryjoin=(
+            "and_("
+            "UserRole.branch_id == Branch.branch_id, "
+            "UserRole.school_id == Branch.school_id"
+            ")"
+        ),
+        foreign_keys=[branch_id, school_id],
         lazy="noload",
+        viewonly=True,
     )
     def __repr__(self) -> str:
         return (

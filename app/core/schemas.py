@@ -1,10 +1,11 @@
 import math
-from typing import Generic, TypeVar
+from typing import Annotated, Generic, TypeVar
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 T = TypeVar("T")
 
+SchoolBranchField = Annotated[int, Field(gt=0, description="Must be a positive integer.")]
 
 # -----------------------------------------------------------------------------
 # PaginatedResponse
@@ -70,6 +71,10 @@ class TenantResponse(BaseModel):
     branch_id  : int
     branch_name: str | None = None
 
+
+class TenantScopeRequest(BaseModel):
+    school_id: SchoolBranchField
+    branch_id: SchoolBranchField
 
 # -----------------------------------------------------------------------------
 # paginate()

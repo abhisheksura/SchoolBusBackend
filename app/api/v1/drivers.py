@@ -6,6 +6,7 @@ from app.drivers.schemas import DriverCreate, DriverResponse, DriverUpdate, Pagi
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.enums import RoleName
+from app.core.schemas import TenantScopeRequest
 from app.api.v1.dependencies import AnyAuthenticated, CurrentUser, require_roles
 
 router = APIRouter(prefix = "/drivers")
@@ -42,41 +43,20 @@ async def get_all_drivers(
     branch_id  : int | None = Query(default=None),
     page       : int  = Query(default=1, ge=1),
     page_size  : int  = Query(default=settings.DEFAULT_PAGE_SIZE, ge=1, le=settings.MAX_PAGE_SIZE),
-    active_only: bool = Query(default=True),
+    active_only: bool = Query(default=False),
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = AnyAuthenticated,
 ) -> PaginatedDriverResponse:
 
-    # SUPER ADMIN
-    if current_user.has_role(RoleName.SUPER_ADMIN):
-        school_id = None
-        accessible_branch_ids = None
-
-    
-    # SCHOOL ADMIN
-    elif current_user.has_role(RoleName.SCHOOL_ADMIN):
-        school_id = current_user.school_id
-        accessible_branch_ids = (
-            current_user.get_accessible_branch_ids(
-                school_id
-            )
-        )
-
-    # BRANCH ADMIN
-    else:
-        school_id = current_user.school_id
-        accessible_branch_ids = [
-            current_user.branch_id
-        ]
+    if not current_user.has_any_role(RoleName.SUPER_ADMIN, RoleName.SCHOOL_ADMIN):
         active_only = True
-    
+
     return await driver_service.get_all_drivers(
         db=db,
         school_id=school_id,
-        # branch_id=branch_id,
+        branch_id=branch_id,
         page=page,
         page_size=page_size,
-        accessible_branch_ids=accessible_branch_ids,
         active_only=active_only,
     )
 
@@ -123,8 +103,8 @@ async def update_driver(
     )
 
 
-@router.delete(
-    "/{driver_id}",
+@router.patch(
+    "/{driver_id}/deactivate",
     response_model=DriverResponse,
     status_code=status.HTTP_200_OK,
     summary="Deactivate driver",
@@ -132,11 +112,27 @@ async def update_driver(
 )
 async def deactivate_driver(
     driver_id: int,
-    school_id: int = Query(...),
-    branch_id: int = Query(...),
+    scope: TenantScopeRequest,
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = DriverAdminRequired,
 ) -> DriverResponse:
     return await driver_service.deactivate_driver(
-        db=db, driver_id=driver_id, school_id=school_id, branch_id=branch_id,
+        db=db, driver_id=driver_id, school_id=scope.school_id, branch_id=scope.branch_id,
+    )
+
+@router.patch(
+    "/{driver_id}/reactivate",
+    response_model=DriverResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Activate driver",
+    description="Activate a driver. BRANCH_ADMIN or above required.",
+)
+async def reactivate_driver(
+    driver_id: int,
+    scope: TenantScopeRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = DriverAdminRequired,
+) -> DriverResponse:
+    return await driver_service.reactivate_driver(
+        db=db, driver_id=driver_id, school_id=scope.school_id, branch_id=scope.branch_id,
     )
