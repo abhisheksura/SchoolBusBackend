@@ -121,7 +121,8 @@ async def get_all_students(
     query = select(Student).where(and_(*filters))
 
     result = await db.execute(
-        query.order_by(Student.student_id)
+        query.order_by(Student.is_active.desc(), Student.grade, Student.section,
+            Student.first_name, Student.last_name)
         .limit(limit)
         .offset(offset)
     )

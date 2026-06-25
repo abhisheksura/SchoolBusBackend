@@ -73,7 +73,10 @@ async def get_all_students(
     current_user: CurrentUser = AnyAuthenticated,
 ) -> PaginatedStudentResponse:
     if not current_user.has_any_role(RoleName.SUPER_ADMIN, RoleName.SCHOOL_ADMIN):
-        active_only = True
+        # Why is this active_only true for Branch admin ?
+        # active_only = True
+        # TO DO
+        pass
     return await student_service.get_all_students(
         db=db,
         school_id=school_id,

@@ -55,7 +55,9 @@ async def get_all_drivers(
     query = select(Driver).where(and_(*filters))
 
     result = await db.execute(
-        query.order_by(Driver.is_active.desc(), Driver.driver_id)
+        query.order_by(Driver.is_active.desc(),
+            Driver.first_name,
+            Driver.last_name)
         .limit(limit)
         .offset(offset)
     )

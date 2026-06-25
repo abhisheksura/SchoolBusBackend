@@ -48,8 +48,8 @@ async def get_all_drivers(
     current_user: CurrentUser = AnyAuthenticated,
 ) -> PaginatedDriverResponse:
 
-    if not current_user.has_any_role(RoleName.SUPER_ADMIN, RoleName.SCHOOL_ADMIN):
-        active_only = True
+    # if not current_user.has_any_role(RoleName.SUPER_ADMIN, RoleName.SCHOOL_ADMIN):
+    #     active_only = True
 
     return await driver_service.get_all_drivers(
         db=db,
