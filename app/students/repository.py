@@ -94,7 +94,7 @@ async def get_all_students(
     branch_id: int | None,
     limit: int,
     offset: int,
-    active_only: bool = True,
+    active_only: bool = False,
 ) -> tuple[list[Student], int]:
     """
     DECOUPLED & OPTIMIZED: Completely removed DB joins for school/branch names.
@@ -187,7 +187,6 @@ async def deactivate_student_by_student_id(
     school_id: int,
     branch_id: int,
 ) -> Student:
-    """Soft-delete a student. Uses RETURNING — single round-trip."""
     result = await db.execute(
         update(Student)
         .where(
@@ -195,15 +194,54 @@ async def deactivate_student_by_student_id(
             Student.school_id == school_id,
             Student.branch_id == branch_id,
         )
-        .values(is_active=False, updated_at=func.now())
-        .returning(Student)
+        .values(
+            is_active=False,
+            updated_at=func.now(),
+        )
     )
     await db.flush()
-    student = result.scalar_one_or_none()
-    if not student:
-        raise StudentNotFoundError(identifier=student_id)
-    return student
 
+    if result.rowcount == 0:
+        raise StudentNotFoundError(identifier=student_id)
+
+    return await get_student_by_student_id(
+        db=db,
+        student_id=student_id,
+        school_id=school_id,
+        branch_id=branch_id,
+    )
+
+
+async def reactivate_student_by_student_id(
+    db: AsyncSession,
+    student_id: int,
+    school_id: int,
+    branch_id: int,
+) -> Student:
+    result = await db.execute(
+        update(Student)
+        .where(
+            Student.student_id == student_id,
+            Student.school_id == school_id,
+            Student.branch_id == branch_id,
+        )
+        .values(
+            is_active=True,
+            updated_at=func.now(),
+        )
+    )
+
+    await db.flush()
+
+    if result.rowcount == 0:
+        raise StudentNotFoundError(identifier=student_id)
+
+    return await get_student_by_student_id(
+        db=db,
+        student_id=student_id,
+        school_id=school_id,
+        branch_id=branch_id,
+    )
 
 # =============================================================================
 # Parent Queries

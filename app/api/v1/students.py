@@ -22,6 +22,7 @@ from app.students.schemas import (
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.enums import LeaveRequestStatus, RoleName
+from app.core.schemas import TenantScopeRequest
 from app.api.v1.dependencies import (
     AnyAuthenticated,
     CurrentUser,
@@ -67,7 +68,7 @@ async def get_all_students(
     branch_id  : int  = Query(...),
     page       : int  = Query(default=1, ge=1),
     page_size  : int  = Query(default=settings.DEFAULT_PAGE_SIZE, ge=1, le=settings.MAX_PAGE_SIZE),
-    active_only: bool = Query(default=True),
+    active_only: bool = Query(default=False),
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = AnyAuthenticated,
 ) -> PaginatedStudentResponse:
@@ -130,8 +131,8 @@ async def update_student(
     )
 
 
-@router.delete(
-    "/students/{student_id}",
+@router.patch(
+    "/students/{student_id}/deactivate",
     response_model=StudentResponse,
     status_code=status.HTTP_200_OK,
     summary="Deactivate student",
@@ -139,18 +140,33 @@ async def update_student(
 )
 async def deactivate_student(
     student_id: int,
-    school_id : int = Query(...),
-    branch_id : int = Query(...),
+    scope: TenantScopeRequest,
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = StudentAdminRequired,
 ) -> StudentResponse:
     return await student_service.deactivate_student(
         db=db,
         student_id=student_id,
-        school_id=school_id,
-        branch_id=branch_id,
+        school_id=scope.school_id,
+        branch_id=scope.branch_id,
     )
 
+@router.patch(
+    "/students/{student_id}/reactivate",
+    response_model=StudentResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Activate Student",
+    description="Activate a Student. BRANCH_ADMIN or above required.",
+)
+async def reactivate_driver(
+    student_id: int,
+    scope: TenantScopeRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = StudentAdminRequired,
+) -> StudentResponse:
+    return await student_service.reactivate_student(
+        db=db, student_id=student_id, school_id=scope.school_id, branch_id=scope.branch_id,
+    )
 
 # =============================================================================
 # Parent Routes

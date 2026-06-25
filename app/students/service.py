@@ -83,7 +83,7 @@ async def get_all_students(
     page: int,
     page_size: int,
     # accessible_branch_ids: list[int] | None,
-    active_only: bool = True,
+    active_only: bool = False,
 ) -> PaginatedStudentResponse:
     """
     Fetch paginated students with zero DB join overhead.
@@ -167,6 +167,15 @@ async def deactivate_student(
     )
     return StudentResponse.model_validate(student)
 
+
+async def reactivate_student(
+    db: AsyncSession,
+    student_id: int,
+    school_id: int,
+    branch_id: int,
+) -> StudentResponse:
+    student = await student_repo.reactivate_student_by_student_id(db, student_id, school_id, branch_id)
+    return StudentResponse.model_validate(student)
 
 # =============================================================================
 # Parent Services
