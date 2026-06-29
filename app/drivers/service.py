@@ -95,42 +95,22 @@ async def get_all_drivers(
 async def update_driver(
     db: AsyncSession,
     driver_id: int,
+    school_id: int,
+    branch_id: int,
     payload: DriverUpdate,
     current_user: CurrentUser,
 ) -> DriverResponse:
-    driver = await driver_repo.get_driver_by_driver_id(
-        db=db,
-        driver_id=driver_id,
-    )
-    if not driver:
-        raise NotFoundException("Driver not found")
-
-    # SUPER_ADMIN can access everything
-    if not current_user.has_role(RoleName.SUPER_ADMIN):
-
-        # School isolation
-        if not current_user.has_school_access(driver.school_id):
-            raise ForbiddenError(
-                detail="You do not have access to this school."
-            )
-
-        # Branch isolation for branch admins
-        if current_user.has_role(RoleName.BRANCH_ADMIN):
-            if not current_user.has_branch_access(
-                driver.school_id,
-                driver.branch_id,
-            ):
-                raise ForbiddenError(
-                    detail="You do not have access to this branch."
-                )
-
-    updated_driver = await driver_repo.update_driver_by_driver_id(
-        db=db,
-        driver_id=driver_id,
-        **payload.model_dump(exclude_unset=True),
-    )
-
-    return DriverResponse.model_validate(updated_driver)
+    try:
+        driver = await driver_repo.update_driver_by_driver_id(
+            db=db,
+            driver_id=driver_id,
+            school_id=school_id,
+            branch_id=branch_id,
+            **payload.model_dump(exclude_unset=True),
+        )
+    except IntegrityError:
+        raise DuplicateEntryError(field="Driver identity", value="duplicate name/license combination")
+    return DriverResponse.model_validate(driver)
 
 
 async def deactivate_driver(

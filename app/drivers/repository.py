@@ -94,6 +94,8 @@ async def create_driver(
 async def update_driver_by_driver_id(
     db: AsyncSession,
     driver_id: int,
+    school_id: int,
+    branch_id: int,
     **kwargs,
 ) -> Driver:
     values = dict(kwargs)
@@ -103,19 +105,19 @@ async def update_driver_by_driver_id(
         update(Driver)
         .where(
             Driver.driver_id == driver_id,
+            Driver.school_id == school_id,
+            Driver.branch_id == branch_id,
         )
         .values(**values)
+        .returning(Driver)
     )
 
     await db.flush()
 
-    if result.rowcount == 0:
+    driver = result.scalar_one_or_none()
+    if not driver:
         raise DriverNotFoundError(identifier=driver_id)
-
-    return await get_driver_by_driver_id(
-        db=db,
-        driver_id=driver_id,
-    )
+    return driver
 
 
 async def deactivate_driver_by_driver_id(
