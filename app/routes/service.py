@@ -24,6 +24,7 @@ from app.core.exceptions import (
     StopNotFoundError,
 )
 from app.core.schemas import paginate, pagination_params
+from app.core.utils import get_tenant_names, to_tenant_response
 
 
 # =============================================================================
@@ -211,29 +212,50 @@ async def get_stop(
 
 async def get_all_stops(
     db: AsyncSession,
-    school_id: int | None,
-    # branch_id: int,
+    school_id: int,
+    branch_id: int,
     page: int,
     page_size: int,
-    accessible_branch_ids: list[int] | None,
-    active_only: bool = True,
+    active_only: bool = False,
 ) -> PaginatedStopResponse:
-    """Fetch paginated stops for a branch, filtered by caller's scope."""
     limit, offset = pagination_params(page, page_size, settings.MAX_PAGE_SIZE)
-
     stops, total = await route_repo.get_all_stops(
         db=db,
         school_id=school_id,
-        branch_ids=accessible_branch_ids,
+        branch_id=branch_id,
         limit=limit,
         offset=offset,
         active_only=active_only,
     )
-    return paginate(
-        items=[StopResponse.model_validate(s) for s in stops],
-        total=total, page=page, page_size=page_size,
-    )
+    # 3. Short-circuit: skip cache parsing entirely if page is empty
+    if not stops:
+        return paginate(
+            items=[],
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
 
+    # 4. Fetch the tenant names *once* per request block (0ms response if cached)
+    school_name, branch_name = await get_tenant_names(db, school_id, branch_id)
+
+    # 5. Map rows efficiently into Pydantic passing string references
+    mapped_items = [
+        to_tenant_response(
+            s,
+            StopResponse,
+            school_name=school_name,
+            branch_name=branch_name
+        )
+        for s in stops
+    ]
+    # 6. Return standard paginated payload structure
+    return paginate(
+        items=mapped_items,
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
 
 async def update_stop(
     db: AsyncSession,
@@ -273,6 +295,15 @@ async def deactivate_stop(
     )
     return StopResponse.model_validate(stop)
 
+
+async def reactivate_stop(
+    db: AsyncSession,
+    stop_id: int,
+    school_id: int,
+    branch_id: int,
+) -> StopResponse:
+    stop = await route_repo.reactivate_stop_by_stop_id(db, stop_id, school_id, branch_id)
+    return StopResponse.model_validate(stop)
 
 # =============================================================================
 # RouteStop Services

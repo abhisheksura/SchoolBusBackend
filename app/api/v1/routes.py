@@ -19,6 +19,7 @@ from app.routes.schemas import (
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.enums import RoleName, TripType
+from app.core.schemas import TenantScopeRequest
 from app.core.scope import validate_scope_access
 from app.api.v1.dependencies import (
     AnyAuthenticated,
@@ -211,44 +212,21 @@ async def create_stop(
     description="Fetch paginated stops filtered by caller's branch scope.",
 )
 async def get_all_stops(
-    school_id  : int | None = Query(default=None),
-    branch_id  : int | None = Query(default=None),
+    school_id  : int  = Query(...),
+    branch_id  : int  = Query(...),
     page       : int  = Query(default=1, ge=1),
     page_size  : int  = Query(default=settings.DEFAULT_PAGE_SIZE, ge=1, le=settings.MAX_PAGE_SIZE),
-    active_only: bool = Query(default=True),
+    active_only: bool = Query(default=False),
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = AnyAuthenticated,
 ) -> PaginatedStopResponse:
-
-    # SUPER ADMIN
-    if current_user.has_role(RoleName.SUPER_ADMIN):
-        school_id = None
-        accessible_branch_ids = None
-
-    # SCHOOL ADMIN
-    elif current_user.has_role(RoleName.SCHOOL_ADMIN):
-        school_id = current_user.school_id
-        accessible_branch_ids = (
-            current_user.get_accessible_branch_ids(
-                school_id
-            )
-        )
-
-    # BRANCH ADMIN
-    else:
-        school_id = current_user.school_id
-        accessible_branch_ids = [
-            current_user.branch_id
-        ]
-        active_only = True
     
     return await route_service.get_all_stops(
         db=db,
         school_id=school_id,
-        # branch_id=branch_id,
+        branch_id=branch_id,
         page=page,
         page_size=page_size,
-        accessible_branch_ids=current_user.get_accessible_branch_ids(school_id),
         active_only=active_only,
     )
 
@@ -300,8 +278,8 @@ async def update_stop(
     )
 
 
-@router.delete(
-    "/stops/{stop_id}",
+@router.patch(
+    "/stops/{stop_id}/deactivate",
     response_model=StopResponse,
     status_code=status.HTTP_200_OK,
     summary="Deactivate stop",
@@ -309,18 +287,33 @@ async def update_stop(
 )
 async def deactivate_stop(
     stop_id  : int,
-    school_id: int = Query(...),
-    branch_id: int = Query(...),
+    scope: TenantScopeRequest,
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = RouteAdminRequired,
 ) -> StopResponse:
     return await route_service.deactivate_stop(
         db=db,
         stop_id=stop_id,
-        school_id=school_id,
-        branch_id=branch_id,
+        school_id=scope.school_id,
+        branch_id=scope.branch_id,
     )
 
+@router.patch(
+    "/stops/{stop_id}/reactivate",
+    response_model=StopResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Activate Stop",
+    description="Activate a Stop. BRANCH_ADMIN or above required.",
+)
+async def reactivate_stop(
+    stop_id: int,
+    scope: TenantScopeRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = RouteAdminRequired,
+) -> StopResponse:
+    return await route_service.reactivate_stop(
+        db=db, stop_id=stop_id, school_id=scope.school_id, branch_id=scope.branch_id,
+    )
 
 # =============================================================================
 # RouteStop Routes (nested under /routes/{route_id}/stops)
