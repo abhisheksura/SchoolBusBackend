@@ -161,7 +161,7 @@ async def deactivate_student(
     summary="Activate Student",
     description="Activate a Student. BRANCH_ADMIN or above required.",
 )
-async def reactivate_driver(
+async def reactivate_student(
     student_id: int,
     scope: TenantScopeRequest,
     db: AsyncSession = Depends(get_db),
