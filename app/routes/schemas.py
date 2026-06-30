@@ -48,7 +48,7 @@ class RouteUpdate(BaseModel):
         return self
 
 
-class RouteResponse(BaseModel):
+class RouteResponse(TenantResponse):
     model_config = ConfigDict(from_attributes=True)
 
     route_id   : int

@@ -52,41 +52,36 @@ async def get_all_routes(
     branch_id: int | None,
     limit: int,
     offset: int,
-    active_only: bool = True,
+    active_only: bool = False,
 ) -> tuple[list[Route], int]:
 
-    query = select(Route).options(
-        selectinload(Route.school),
-        selectinload(Route.branch),
-    )
+    # 1. Build common filter conditions
+    filters = []
     if school_id is not None:
-        query = query.where(
-            Route.school_id == school_id
-        )
-
+        filters.append(Route.school_id == school_id)
     if branch_id is not None:
-        query = query.where(
-            Route.branch_id == branch_id
-        )
-
+        filters.append(Route.branch_id == branch_id)
     if active_only:
-        query = query.where(
-            Route.is_active == True
-        )
+        filters.append(Route.is_active == True)
 
+    # 2. Optimized direct Count (No subqueries, no string joins evaluated)
     total = await db.scalar(
-        select(func.count()).select_from(
-            query.subquery()
-        )
-    )
+        select(func.count(Route.route_id)).where(and_(*filters))
+    ) or 0
+
+    if total == 0:
+        return [], 0
+
+    # 3. Clean query fetching ONLY what this module owns
+    query = select(Route).where(and_(*filters))
 
     result = await db.execute(
-        query.order_by(Route.route_name)
+        query.order_by(Route.is_active.desc(), Route.route_name)
         .limit(limit)
         .offset(offset)
     )
+    return list(result.scalars().all()), total
 
-    return list(result.scalars().all()), total or 0
 
 async def get_route_with_stops_by_route_id(
     db: AsyncSession,
@@ -221,14 +216,49 @@ async def deactivate_route_by_route_id(
             Route.branch_id == branch_id,
         )
         .values(is_active=False, updated_at=func.now())
-        .returning(Route)
     )
     await db.flush()
-    route = result.scalar_one_or_none()
-    if not route:
-        raise RouteNotFoundError(identifier=route_id)
-    return route
 
+    if result.rowcount == 0:
+        raise RouteNotFoundError(identifier=route_id)
+
+    return await get_route_by_route_id(
+        db=db,
+        route_id=route_id,
+        school_id=school_id,
+        branch_id=branch_id,
+    )
+
+async def reactivate_route_by_route_id(
+    db: AsyncSession,
+    route_id: int,
+    school_id: int,
+    branch_id: int,
+) -> Route:
+    result = await db.execute(
+        update(Route)
+        .where(
+            Route.route_id == route_id,
+            Route.school_id == school_id,
+            Route.branch_id == branch_id,
+        )
+        .values(
+            is_active=True,
+            updated_at=func.now(),
+        )
+    )
+
+    await db.flush()
+
+    if result.rowcount == 0:
+        raise RouteNotFoundError(identifier=route_id)
+
+    return await get_route_by_route_id(
+        db=db,
+        route_id=route_id,
+        school_id=school_id,
+        branch_id=branch_id,
+    )
 
 # =============================================================================
 # Stop Queries

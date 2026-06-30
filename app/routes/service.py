@@ -114,8 +114,7 @@ async def get_all_routes(
     branch_id: int,
     page: int,
     page_size: int,
-    # accessible_branch_ids: list[int] | None,
-    active_only: bool = True,
+    active_only: bool = False,
 ) -> PaginatedRouteResponse:
     """Fetch paginated routes for a branch, filtered by caller's scope."""
     limit, offset = pagination_params(page, page_size, settings.MAX_PAGE_SIZE)
@@ -128,10 +127,34 @@ async def get_all_routes(
         offset=offset,
         active_only=active_only,
     )
+    # 3. Short-circuit: skip cache parsing entirely if page is empty
+    if not routes:
+        return paginate(
+            items=[],
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
+    # 4. Fetch the tenant names *once* per request block (0ms response if cached)
+    school_name, branch_name = await get_tenant_names(db, school_id, branch_id)
 
+    # 5. Map rows efficiently into Pydantic passing string references
+    mapped_items = [
+        to_tenant_response(
+            route,
+            RouteResponse,
+            school_name=school_name,
+            branch_name=branch_name
+        )
+        for route in routes
+    ]
+
+    # 6. Return standard paginated payload structure
     return paginate(
-        items=[RouteResponse.model_validate(r) for r in routes],
-        total=total, page=page, page_size=page_size,
+        items=mapped_items,
+        total=total,
+        page=page,
+        page_size=page_size,
     )
 
 
@@ -168,6 +191,15 @@ async def deactivate_route(
     )
     return RouteResponse.model_validate(route)
 
+
+async def reactivate_route(
+    db: AsyncSession,
+    route_id: int,
+    school_id: int,
+    branch_id: int,
+) -> RouteResponse:
+    route = await route_repo.reactivate_route_by_route_id(db, route_id, school_id, branch_id)
+    return RouteResponse.model_validate(route)
 
 # =============================================================================
 # Stop Services
@@ -242,12 +274,12 @@ async def get_all_stops(
     # 5. Map rows efficiently into Pydantic passing string references
     mapped_items = [
         to_tenant_response(
-            s,
+            stop,
             StopResponse,
             school_name=school_name,
             branch_name=branch_name
         )
-        for s in stops
+        for stop in stops
     ]
     # 6. Return standard paginated payload structure
     return paginate(

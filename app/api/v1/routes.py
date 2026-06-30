@@ -62,17 +62,14 @@ async def create_route(
     description="Fetch paginated routes filtered by caller's branch scope.",
 )
 async def get_all_routes(
-    school_id  : int | None = Query(default=None, description="School ID"),
-    branch_id  : int | None = Query(default=None, description="Branch ID"),
+    school_id  : int  = Query(...),
+    branch_id  : int  = Query(...),
     page       : int  = Query(default=1, ge=1),
     page_size  : int  = Query(default=settings.DEFAULT_PAGE_SIZE, ge=1, le=settings.MAX_PAGE_SIZE),
-    active_only: bool = Query(default=True),
+    active_only: bool = Query(default=False),
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = AnyAuthenticated,
 ) -> PaginatedRouteResponse:
-    
-    if not current_user.has_any_role(RoleName.SUPER_ADMIN, RoleName.SCHOOL_ADMIN):
-        active_only = True
 
     validate_scope_access(
         current_user=current_user,
@@ -85,10 +82,8 @@ async def get_all_routes(
         branch_id=branch_id,
         page=page,
         page_size=page_size,
-        # accessible_branch_ids=current_user.get_accessible_branch_ids(school_id),
         active_only=active_only,
     )
-
 
 @router.get(
     "/routes/{route_id}",
@@ -163,8 +158,8 @@ async def update_route(
     )
 
 
-@router.delete(
-    "/routes/{route_id}",
+@router.patch(
+    "/routes/{route_id}/deactivate",
     response_model=RouteResponse,
     status_code=status.HTTP_200_OK,
     summary="Deactivate route",
@@ -172,18 +167,33 @@ async def update_route(
 )
 async def deactivate_route(
     route_id : int,
-    school_id: int = Query(...),
-    branch_id: int = Query(...),
+    scope: TenantScopeRequest,
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = RouteAdminRequired,
 ) -> RouteResponse:
     return await route_service.deactivate_route(
         db=db,
         route_id=route_id,
-        school_id=school_id,
-        branch_id=branch_id,
+        school_id=scope.school_id,
+        branch_id=scope.branch_id,
     )
 
+@router.patch(
+    "/routes/{route_id}/reactivate",
+    response_model=RouteResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Activate Route",
+    description="Activate a Route. BRANCH_ADMIN or above required.",
+)
+async def reactivate_stop(
+    route_id: int,
+    scope: TenantScopeRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = RouteAdminRequired,
+) -> RouteResponse:
+    return await route_service.reactivate_route(
+        db=db, route_id=route_id, school_id=scope.school_id, branch_id=scope.branch_id,
+    )
 
 # =============================================================================
 # Stop Routes
