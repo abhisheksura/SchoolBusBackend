@@ -6,7 +6,8 @@ from fastapi import APIRouter
 # -----------------------------------------------------------------------------
 from app.api.v1.auth           import router as auth_router
 from app.api.v1.schools        import router as schools_router
-from app.api.v1.fleet          import router as fleet_router
+#from app.api.v1.fleet          import router as fleet_router
+from app.api.v1.buses          import router as bus_router
 from app.api.v1.drivers        import router as drivers_router
 from app.api.v1.gps            import router as gps_router
 from app.api.v1.routes         import router as routes_router
@@ -24,7 +25,8 @@ api_router = APIRouter(prefix="/api/v1")
 # -----------------------------------------------------------------------------
 api_router.include_router(auth_router,          prefix="/auth",          tags=["Auth"])
 api_router.include_router(schools_router,       prefix="/schools",       tags=["Schools"])
-api_router.include_router(fleet_router,         prefix="/fleet",         tags=["Fleet"])
+#api_router.include_router(fleet_router,         prefix="/fleet",         tags=["Fleet"])
+api_router.include_router(bus_router,           tags=["Buses"])
 api_router.include_router(drivers_router,       tags=["Drivers"])
 api_router.include_router(gps_router,           tags=["GPS"])
 api_router.include_router(routes_router,        tags=["Routes"])
