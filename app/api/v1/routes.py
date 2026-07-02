@@ -94,8 +94,8 @@ async def get_all_routes(
 )
 async def get_route(
     route_id : int,
-    school_id: int | None = Query(default=None, description="School ID"),
-    branch_id: int | None = Query(default=None, description="Branch ID"),
+    school_id: int = Query(...),
+    branch_id: int = Query(...),
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = AnyAuthenticated,
 ) -> RouteResponse:
@@ -185,7 +185,7 @@ async def deactivate_route(
     summary="Activate Route",
     description="Activate a Route. BRANCH_ADMIN or above required.",
 )
-async def reactivate_stop(
+async def reactivate_route(
     route_id: int,
     scope: TenantScopeRequest,
     db: AsyncSession = Depends(get_db),
