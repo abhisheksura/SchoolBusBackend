@@ -24,8 +24,7 @@ from app.core.exceptions import (
     StopNotFoundError,
 )
 from app.core.schemas import paginate, pagination_params
-from app.core.utils import get_tenant_names, to_tenant_response
-
+from app.core.utils import get_tenant_names, to_tenant_response, invalidate_route_names, invalidate_stop_names
 
 # =============================================================================
 # Route Services
@@ -48,6 +47,7 @@ async def create_route(
             route_name=payload.route_name,
             description=payload.description,
         )
+        invalidate_route_names(payload.school_id, payload.branch_id)
     except IntegrityError:
         raise DuplicateEntryError(field="route_code", value=payload.route_code)
     return RouteResponse.model_validate(route)
@@ -137,7 +137,6 @@ async def get_all_routes(
         )
     # 4. Fetch the tenant names *once* per request block (0ms response if cached)
     school_name, branch_name = await get_tenant_names(db, school_id, branch_id)
-
     # 5. Map rows efficiently into Pydantic passing string references
     mapped_items = [
         to_tenant_response(
@@ -174,6 +173,7 @@ async def update_route(
             branch_id=branch_id,
             **payload.model_dump(exclude_unset=True),
         )
+        invalidate_route_names(school_id, branch_id)
     except IntegrityError:
         raise DuplicateEntryError(field="route_code", value=payload.route_code or "")
     return RouteResponse.model_validate(route)
@@ -189,6 +189,8 @@ async def deactivate_route(
     route = await route_repo.deactivate_route_by_route_id(
         db, route_id, school_id, branch_id
     )
+    invalidate_route_names(school_id, branch_id)
+
     return RouteResponse.model_validate(route)
 
 
@@ -222,6 +224,8 @@ async def create_stop(
             latitude=payload.latitude,
             longitude=payload.longitude,
         )
+        invalidate_stop_names(payload.school_id, payload.branch_id)
+
     except IntegrityError:
         raise DuplicateEntryError(field="stop_name", value=payload.stop_name)
     return StopResponse.model_validate(stop)
@@ -305,6 +309,7 @@ async def update_stop(
             branch_id=branch_id,
             **payload.model_dump(exclude_unset=True),
         )
+        invalidate_stop_names(school_id, branch_id)
     except IntegrityError:
         raise DuplicateEntryError(field="stop_name", value=payload.stop_name or "")
     return StopResponse.model_validate(stop)
@@ -325,6 +330,7 @@ async def deactivate_stop(
     stop = await route_repo.deactivate_stop_by_stop_id(
         db, stop_id, school_id, branch_id
     )
+    invalidate_stop_names(school_id, branch_id)
     return StopResponse.model_validate(stop)
 
 

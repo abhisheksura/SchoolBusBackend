@@ -3,6 +3,8 @@ from typing import Any, Type, TypeVar
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.cache import TTLCache, get_or_set
+
 
 # -----------------------------------------------------------------------------
 # utcnow()
@@ -45,6 +47,11 @@ ResponseSchema = TypeVar("ResponseSchema", bound=BaseModel)
 _SCHOOL_CACHE: dict[int, str] = {}
 _BRANCH_CACHE: dict[int, str] = {}
 
+# Paginated stop lists — one cache line per (tenant scope, filters, page)
+_ROUTE_CACHE = TTLCache(ttl_seconds=300)
+
+# Paginated route lists — same shape as stops
+_STOP_CACHE = TTLCache(ttl_seconds=300)
 
 async def get_tenant_names(db: AsyncSession, school_id: int, branch_id: int) -> tuple[str, str]:
     """
@@ -73,6 +80,85 @@ async def get_tenant_names(db: AsyncSession, school_id: int, branch_id: int) -> 
 
     return _SCHOOL_CACHE[school_id], _BRANCH_CACHE[branch_id]
 
+# ---------------------------------------------------------------------------
+# Reads — cache-aside, same shape as your original
+# ---------------------------------------------------------------------------
+
+async def get_route_names(
+    db: AsyncSession,
+    school_id: int,
+    branch_id: int,
+) -> dict[int, str]:
+    """
+    Returns {route_id: route_name} for every route in this tenant.
+    Built once per tenant and cached until explicitly invalidated by a
+    write to that tenant's routes (see invalidate_route_names below).
+    """
+    cache_key = (school_id, branch_id)
+    async def _load() -> dict[int, str]:
+        # Inline import to avoid circular dependency with app.routes.models
+        from app.routes.models import Route
+
+        rows = await db.execute(
+            select(Route.route_id, Route.route_name).where(
+                Route.school_id == school_id,
+                Route.branch_id == branch_id,
+            )
+        )
+        return {route_id: route_name for route_id, route_name in rows.all()}
+
+    return await get_or_set(_ROUTE_CACHE, cache_key, _load)
+
+
+async def get_stop_names(
+    db: AsyncSession,
+    school_id: int,
+    branch_id: int,
+) -> dict[int, str]:
+    """
+    Returns {stop_id: stop_name} for every stop in this tenant.
+    Built once per tenant and cached until explicitly invalidated by a
+    write to that tenant's stops (see invalidate_stop_names below).
+    """
+    cache_key = (school_id, branch_id)
+    async def _load() -> dict[int, str]:
+        # Inline import to avoid circular dependency with app.stops.models
+        from app.routes.models import Stop
+
+        rows = await db.execute(
+            select(Stop.stop_id, Stop.stop_name).where(
+                Stop.school_id == school_id,
+                Stop.branch_id == branch_id,
+            )
+        )
+        return {stop_id: stop_name for stop_id, stop_name in rows.all()}
+
+    return await get_or_set(_STOP_CACHE, cache_key, _load)
+
+# ---------------------------------------------------------------------------
+# Invalidation — MUST be called from every route/stop write path
+# ---------------------------------------------------------------------------
+
+def invalidate_route_names(school_id: int, branch_id: int) -> None:
+    """
+    Drops the cached route name map for this tenant.
+
+    Call this from: create_route, update_route (if route_name changed),
+    deactivate_route. Cheap to call unconditionally on any route write —
+    the next get_route_names() call just rebuilds it from the DB.
+    """
+    _ROUTE_CACHE.invalidate_prefix((school_id, branch_id))
+
+
+def invalidate_stop_names(school_id: int, branch_id: int) -> None:
+    """
+    Drops the cached stop name map for this tenant.
+
+    Call this from: create_stop, update_stop (if stop_name changed),
+    deactivate_stop. Cheap to call unconditionally on any stop write.
+    """
+    _STOP_CACHE.invalidate_prefix((school_id, branch_id))
+
 
 def to_tenant_response(
     model: Any,
@@ -80,6 +166,7 @@ def to_tenant_response(
     *,
     school_name: str | None,
     branch_name: str | None,
+    **extra_fields: Any,
 ) -> ResponseSchema:
     """
     Maps an SQLAlchemy ORM model directly to a target Pydantic Response schema
@@ -99,5 +186,8 @@ def to_tenant_response(
     model_data["school_name"] = school_name
     model_data["branch_name"] = branch_name
 
-    # 3. Parse and validate directly into your Pydantic Response Class
+    # 3. Inject any additional resolved fields (route_name, stop_name, etc.)
+    model_data.update(extra_fields)
+
+    # 4. Parse and validate directly into your Pydantic Response Class
     return schema_cls.model_validate(model_data)

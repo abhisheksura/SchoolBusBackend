@@ -22,9 +22,6 @@ from app.core.enums import TripType
 from enum import Enum
 from sqlalchemy import Enum as SQLEnum
 
-class TripType(str, Enum):
-    PICKUP = "PICKUP"
-    DROPOFF = "DROPOFF"
 
 # -----------------------------------------------------------------------------
 # Route
@@ -174,7 +171,7 @@ class RouteStop(Base):
     stop_id       : Mapped[int]          = mapped_column(Integer, ForeignKey("stops.stop_id", ondelete="RESTRICT"), nullable=False)
     school_id     : Mapped[int]          = mapped_column(Integer, ForeignKey("schools.school_id", ondelete="RESTRICT"), nullable=False)
     branch_id     : Mapped[int]          = mapped_column(Integer, nullable=False)
-    trip_type: Mapped[TripType]          = mapped_column(
+    trip_type     : Mapped[TripType]     = mapped_column(
         SQLEnum(
             TripType,
             name="trip_type_enum",
