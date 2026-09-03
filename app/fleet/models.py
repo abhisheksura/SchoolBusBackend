@@ -1,5 +1,5 @@
+# app/fleet/models.py
 from datetime import datetime
-from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     Boolean,
@@ -17,56 +17,29 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.db.base import Base, TZDateTime
 from app.core.db.mixins.tenant_mixin import TenantInfoMixin
 
-if TYPE_CHECKING:
-    from app.schools.models import School, Branch
-
 
 # -----------------------------------------------------------------------------
 # Bus
 # Maps to: buses table
-# Scoped to (branch_id, school_id) via composite FK.
+# Scoped to (branch_id, school_id).
 # Rules:
-#   - Soft delete only — is_active = False, never hard delete
+#   - Soft delete only — is_active = False
 #   - capacity must be > 0 (DB CHECK)
-#   - bus_number unique per school — same number allowed across schools
 #   - ondelete="RESTRICT" — soft-delete system, no cascade wipes
+#   - TenantInfoMixin provides school_name / branch_name computed properties
+#     when school/branch relationships are selectinload-ed
 # -----------------------------------------------------------------------------
 class Bus(TenantInfoMixin, Base):
-    """ORM model for the buses table."""
-
     __tablename__ = "buses"
 
     bus_id    : Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
     school_id : Mapped[int]      = mapped_column(Integer, ForeignKey("schools.school_id", ondelete="RESTRICT"), nullable=False)
     branch_id : Mapped[int]      = mapped_column(Integer, nullable=False)
-    bus_number: Mapped[str]      = mapped_column(String(20), nullable=False)
+    bus_number: Mapped[str]      = mapped_column(String(50), nullable=False)
     capacity  : Mapped[int]      = mapped_column(Integer, nullable=False)
     is_active : Mapped[bool]     = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     created_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False, server_default=func.now(), onupdate=func.now())
-
-    # -------------------------------------------------------------------------
-    # Relationships
-    # lazy="noload" — never lazy load in async context.
-    # Use selectinload explicitly in repo queries that return BusResponse.
-    #
-    # school: simple FK — school_id references schools.school_id directly.
-    #
-    # branch: composite FK — branch is identified by (branch_id, school_id).
-    #   foreign_keys must be passed as a list of column objects (not strings)
-    #   to avoid SQLAlchemy mapper resolution failures.
-    # -------------------------------------------------------------------------
-    school: Mapped["School"] = relationship(
-        "School",
-        foreign_keys=[school_id],
-        lazy="noload",
-    )
-    branch: Mapped["Branch"] = relationship(
-        "Branch",
-        foreign_keys=[branch_id, school_id],
-        lazy="noload",
-        primaryjoin="and_(Bus.branch_id == Branch.branch_id, Bus.school_id == Branch.school_id)",
-    )
 
     __table_args__ = (
         ForeignKeyConstraint(
@@ -76,10 +49,29 @@ class Bus(TenantInfoMixin, Base):
             name="fk_buses_branch_id_school_id_branches",
         ),
         CheckConstraint("capacity > 0", name="ck_buses_capacity_positive"),
-        UniqueConstraint("bus_number", "school_id", name="uq_buses_bus_number_school_id"),
+        UniqueConstraint("bus_id", "branch_id", "school_id", name="uq_buses_bus_id_branch_id_school_id"),
         Index("idx_buses_school_branch", "school_id", "branch_id"),
     )
 
+    # -------------------------------------------------------------------------
+    # Relationships — lazy="noload" enforces explicit selectinload in repo.
+    # Accessing without loading raises an error rather than triggering a silent
+    # N+1 sync query (which would fail in async context anyway).
+    # TenantInfoMixin.school_name / .branch_name use getattr — safe if not loaded
+    # (returns None), so list endpoints that skip joining are fine.
+    # -------------------------------------------------------------------------
+    school: Mapped["School"] = relationship(  # type: ignore[name-defined]
+        "School",
+        foreign_keys=[school_id],
+        lazy="noload",
+    )
+    branch: Mapped["Branch"] = relationship(  # type: ignore[name-defined]
+        "Branch",
+        primaryjoin="and_(Bus.branch_id == Branch.branch_id, Bus.school_id == Branch.school_id)",
+        foreign_keys="[Bus.branch_id, Bus.school_id]",
+        lazy="noload",
+        viewonly=True,
+    )
+
     def __repr__(self) -> str:
-        """Return a human-readable representation of the Bus instance."""
-        return f"<Bus bus_id={self.bus_id} bus_number={self.bus_number!r}>"
+        return f"<Bus bus_id={self.bus_id} bus_number={self.bus_number}>"

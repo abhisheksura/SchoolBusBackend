@@ -1,3 +1,5 @@
+# app/fleet/schemas.py
+
 from datetime import datetime
 from typing import Annotated
 
@@ -16,6 +18,7 @@ class BusCreate(BaseModel):
     """
     model_config = ConfigDict(str_strip_whitespace=True)
 
+    school_id : SchoolBranchField
     branch_id : SchoolBranchField
     bus_number: str = Field(min_length=1, max_length=20)
     capacity  : int = Field(gt=0, description="Seating capacity — must be greater than 0.")

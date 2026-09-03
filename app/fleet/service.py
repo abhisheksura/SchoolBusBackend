@@ -145,8 +145,6 @@ async def deactivate_bus(
     if not current_user.has_branch_access(school_id, bus.branch_id):
         raise ForbiddenError()
     deactivated = await fleet_repo.deactivate_bus_by_bus_id(db, bus_id, school_id)
-    if not deactivated:
-        raise NotFoundError()
 
     bus = await fleet_repo.get_bus_detail(db, bus_id, school_id)
     return BusResponse.model_validate(bus)
