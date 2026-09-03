@@ -35,6 +35,35 @@ async def get_student_by_student_id(
     return student
 
 
+async def get_students_by_ids(
+    db: AsyncSession,
+    school_id: int,
+    branch_id: int,
+    student_ids: list[int],
+) -> dict[int, Student]:
+
+    if not student_ids:
+        return {}
+
+    result = await db.execute(
+        select(Student)
+        .options(selectinload(Student.student_parents)
+                .selectinload(StudentParent.parent))
+        .where(
+            Student.school_id == school_id,
+            Student.branch_id == branch_id,
+            Student.student_id.in_(student_ids),
+        )
+    )
+
+    students = result.scalars().all()
+
+    return {
+        student.student_id: student
+        for student in students
+    }
+
+
 async def get_student_by_user_id_or_none(
     db: AsyncSession,
     user_id: int,
@@ -202,8 +231,8 @@ async def deactivate_student_by_student_id(
     )
     await db.flush()
 
-    if result.rowcount == 0:
-        raise StudentNotFoundError(identifier=student_id)
+    # if result.rowcount == 0:
+    #     raise StudentNotFoundError(identifier=student_id)
 
     return await get_student_by_student_id(
         db=db,
@@ -234,8 +263,8 @@ async def reactivate_student_by_student_id(
 
     await db.flush()
 
-    if result.rowcount == 0:
-        raise StudentNotFoundError(identifier=student_id)
+    # if result.rowcount == 0:
+    #     raise StudentNotFoundError(identifier=student_id)
 
     return await get_student_by_student_id(
         db=db,
@@ -483,8 +512,8 @@ async def delete_student_parent_by_id(
         )
     )
     await db.flush()
-    if result.rowcount == 0:
-        raise StudentNotFoundError(identifier=student_parent_id)
+    # if result.rowcount == 0:
+    #     raise StudentNotFoundError(identifier=student_parent_id)
 
 
 # =============================================================================

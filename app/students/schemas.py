@@ -90,6 +90,22 @@ class StudentResponse(BaseModel):
     updated_at      : datetime
 
 
+class StudentSummary(BaseModel):
+    student_id: int
+
+    first_name      : str
+    last_name       : str | None
+
+    admission_number: str | None
+    grade           : str | None
+    section         : str | None
+
+    parent_name     : str | None
+    parent_phone    : str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 # =============================================================================
 # Parent Schemas
 # =============================================================================

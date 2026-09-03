@@ -174,7 +174,7 @@ class StudentParent(Base):
         return (
             f"<StudentParent id={self.student_parent_id} "
             f"student={self.student_id} parent={self.parent_id} "
-            f"rel={self.relationship} primary={self.is_primary}>"
+            f"rel={self.relationship_type} primary={self.is_primary}>"
         )
 
 
