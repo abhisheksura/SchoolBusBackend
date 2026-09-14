@@ -1,7 +1,7 @@
 from sqlalchemy import select, update, func, delete, and_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from datetime import datetime, timezone
 from app.routes.models import Route, RouteStop, Stop
 from app.core.enums import TripType
 from app.core.exceptions import (
@@ -9,6 +9,7 @@ from app.core.exceptions import (
     StopNotFoundError,
     DuplicateEntryError,
     ConflictError,
+    ReorderMismatchError,
 )
 
 # =============================================================================
@@ -531,6 +532,9 @@ async def get_route_stops_by_route_and_trip_type(
     """
     result = await db.execute(
         select(RouteStop)
+        .options(
+            selectinload(RouteStop.stop)
+        )
         .where(
             RouteStop.route_id == route_id,
             RouteStop.school_id == school_id,
@@ -656,5 +660,133 @@ async def delete_route_stop_by_id(
         )
     )
     await db.flush()
-    if result.rowcount == 0:
+    deleted_id = result.scalar_one_or_none()
+    if deleted_id is None:
         raise StopNotFoundError(identifier=route_stop_id)
+
+
+async def reorder_route_stops(
+    db: AsyncSession,
+    route_id: int,
+    school_id: int,
+    branch_id: int,
+    trip_type: TripType,
+    stop_ids: list[int],
+) -> list[RouteStop]:
+    """
+    Bulk-reorder route_stops for a route + trip_type.
+
+    stop_ids must contain the FULL set of route_stop_id values for this
+    route + trip_type, in the desired order.
+
+    Example:
+        stop_ids = [13, 11, 14, 12]
+
+    Results in:
+        route_stop_id 13 -> sequence 1
+        route_stop_id 11 -> sequence 2
+        route_stop_id 14 -> sequence 3
+        route_stop_id 12 -> sequence 4
+
+    A two-phase update is used because of the unique constraint:
+
+        UNIQUE(route_id, trip_type, stop_sequence)
+
+    The temporary sequence values are positive because the database also
+    enforces:
+
+        CHECK(stop_sequence > 0)
+    """
+    # ------------------------------------------------------------------
+    # 1. Fetch all route stops for this route + tenant + trip type
+    # ------------------------------------------------------------------
+
+    result = await db.execute(
+        select(RouteStop)
+        .options(selectinload(RouteStop.stop))
+        .where(
+            RouteStop.route_id == route_id,
+            RouteStop.school_id == school_id,
+            RouteStop.branch_id == branch_id,
+            RouteStop.trip_type == trip_type,
+        )
+    )
+
+    route_stops = list(result.scalars().all())
+
+    # ------------------------------------------------------------------
+    # 2. Validate that the submitted IDs exactly match the existing IDs
+    # ------------------------------------------------------------------
+
+    existing_ids = {
+        route_stop.route_stop_id
+        for route_stop in route_stops
+    }
+
+    submitted_ids = set(stop_ids)
+
+    if submitted_ids != existing_ids:
+        raise ReorderMismatchError()
+
+    # Optional safety check against duplicate IDs.
+    # This should normally be unnecessary because the set comparison
+    # above catches duplicates when lengths differ.
+    if len(stop_ids) != len(existing_ids):
+        raise ReorderMismatchError()
+
+    # ------------------------------------------------------------------
+    # 3. Create a fast lookup dictionary
+    # ------------------------------------------------------------------
+
+    route_stop_by_id = {
+        route_stop.route_stop_id: route_stop
+        for route_stop in route_stops
+    }
+
+    # ------------------------------------------------------------------
+    # 4. Phase 1
+    #
+    # Move all records to a temporary POSITIVE sequence range.
+    #
+    # We cannot use -1, -2, etc. because the database has:
+    #
+    #     CHECK (stop_sequence > 0)
+    #
+    # The temporary values also need to be outside the normal sequence
+    # range so they cannot collide with existing sequences.
+    # ------------------------------------------------------------------
+
+    TEMP_OFFSET = 1_000_000
+
+    for sequence, route_stop_id in enumerate(stop_ids, start=1):
+        route_stop = route_stop_by_id[route_stop_id]
+        route_stop.stop_sequence = TEMP_OFFSET + sequence
+
+    await db.flush()
+
+    # ------------------------------------------------------------------
+    # 5. Phase 2
+    #
+    # Assign the final sequence numbers 1..N according to the
+    # submitted order.
+    # ------------------------------------------------------------------
+
+    for sequence, route_stop_id in enumerate(stop_ids, start=1):
+        route_stop = route_stop_by_id[route_stop_id]
+
+        route_stop.stop_sequence = sequence
+        route_stop.updated_at = datetime.now(timezone.utc)
+
+    await db.flush()
+
+    # ------------------------------------------------------------------
+    # 6. Return the reordered records
+    # ------------------------------------------------------------------
+
+    return await get_route_stops_by_route_and_trip_type(
+        db=db,
+        route_id=route_id,
+        school_id=school_id,
+        branch_id=branch_id,
+        trip_type=trip_type,
+    )

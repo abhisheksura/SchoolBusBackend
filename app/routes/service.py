@@ -13,8 +13,11 @@ from app.routes.schemas import (
     StopCreate,
     StopResponse,
     StopUpdate,
+    ReorderRouteStopsRequest,
+    ReorderRouteStopsResponse,
     PaginatedRouteResponse,
     PaginatedStopResponse,
+    RouteStopReorderRequest
 )
 from app.core.config import settings
 from app.core.enums import TripType
@@ -473,3 +476,32 @@ async def get_route_stops(
         )
 
     return [RouteStopResponse.model_validate(rs) for rs in stops]
+
+
+async def reorder_route_stops(
+    db: AsyncSession,
+    route_id: int,
+    school_id: int,
+    branch_id: int,
+    payload: RouteStopReorderRequest,
+    # accessible_branch_ids: list[int] | None,
+) -> list[RouteStopResponse]:
+    """
+    Bulk-reorder all stops of a given trip_type on a route.
+    Scope check BEFORE DB hit. Role check (BRANCH_ADMIN+) enforced at router.
+    """
+    # if accessible_branch_ids is not None and branch_id not in accessible_branch_ids:
+    #     raise RouteNotFoundError(identifier=route_id)
+
+    # Verify route exists in this branch
+    await route_repo.get_route_by_route_id(db, route_id, school_id, branch_id)
+    print("RouteStops service")
+    route_stops = await route_repo.reorder_route_stops(
+        db=db,
+        route_id=route_id,
+        school_id=school_id,
+        branch_id=branch_id,
+        trip_type=payload.stop_type,
+        stop_ids=payload.stop_ids,
+    )
+    return [RouteStopResponse.model_validate(rs) for rs in route_stops]

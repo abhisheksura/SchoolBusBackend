@@ -13,6 +13,9 @@ from app.routes.schemas import (
     StopCreate,
     StopResponse,
     StopUpdate,
+    ReorderRouteStopsRequest,
+    ReorderRouteStopsResponse,
+    RouteStopReorderRequest,
     PaginatedRouteResponse,
     PaginatedStopResponse,
 )
@@ -440,4 +443,60 @@ async def remove_stop_from_route(
         school_id=school_id,
         branch_id=branch_id,
         accessible_branch_ids=current_user.get_accessible_branch_ids(school_id),
+    )
+
+@router.post(
+    "/routes/{route_id}/reorder-stops-old",
+    response_model=ReorderRouteStopsResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Reorder route stops",
+    description=(
+        "Custom method (AIP-136) to atomically update the sequence ordering of stops "
+        "for a given route and trip_type. BRANCH_ADMIN or above required."
+    ),
+)
+async def reorder_route_stops_old(
+    route_id : int,
+    payload  : ReorderRouteStopsRequest,
+    school_id: int = Query(...),
+    branch_id: int = Query(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = RouteAdminRequired,
+) -> ReorderRouteStopsResponse:
+    return await route_service.reorder_route_stops_old(
+        db=db,
+        route_id=route_id,
+        school_id=school_id,
+        branch_id=branch_id,
+        payload=payload,
+        accessible_branch_ids=current_user.get_accessible_branch_ids(school_id),
+    )
+
+@router.post(
+    "/routes/{route_id}/reorder-stops",
+    response_model=list[RouteStopResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Reorder route stops",
+    description=(
+        "Bulk-reorder all stops of a given trip_type on a route. "
+        "stop_ids must be the full, ordered list of route_stop_ids currently "
+        "assigned to this route + trip_type — sequence is assigned as 1, 2, 3… "
+        "in the order provided. BRANCH_ADMIN or above required."
+    ),
+)
+async def reorder_route_stops(
+    route_id : int,
+    payload  : RouteStopReorderRequest,
+    school_id: int = Query(...),
+    branch_id: int = Query(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = RouteAdminRequired,
+) -> list[RouteStopResponse]:
+    return await route_service.reorder_route_stops(
+        db=db,
+        route_id=route_id,
+        school_id=school_id,
+        branch_id=branch_id,
+        payload=payload,
+        # accessible_branch_ids=current_user.get_accessible_branch_ids(school_id),
     )

@@ -201,6 +201,73 @@ class RouteStopResponse(BaseModel):
 
 
 # =============================================================================
+# RouteStop Reorder Schemas (Google AIP-136 Custom Method)
+# =============================================================================
+
+class StopReorderItem(BaseModel):
+    """Represents a single route stop and its target sequence order."""
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    route_stop_id: int = Field(gt=0, description="ID of the RouteStop mapping record.")
+    stop_sequence: int = Field(gt=0, description="New 1-based sequential position for the stop.")
+
+
+class ReorderRouteStopsRequest(BaseModel):
+    """Payload for custom method POST /routes/{route_id}/reorder-stops."""
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    trip_type: TripType = Field(..., description="Trip context for reordering (PICKUP or DROPOFF).")
+    stops    : list[StopReorderItem] = Field(
+        ...,
+        min_length=1,
+        description="List of all route_stop_ids with their updated unique sequence positions.",
+    )
+
+    @field_validator("stops")
+    @classmethod
+    def validate_unique_sequences_and_ids(cls, v: list[StopReorderItem]) -> list[StopReorderItem]:
+        """Ensures route_stop_ids and stop_sequence values are unique in the request."""
+        ids = [item.route_stop_id for item in v]
+        sequences = [item.stop_sequence for item in v]
+
+        if len(ids) != len(set(ids)):
+            raise ValueError("Duplicate route_stop_id values are not allowed in the request.")
+        if len(sequences) != len(set(sequences)):
+            raise ValueError("Duplicate stop_sequence positions are not allowed in the request.")
+
+        return v
+
+
+class ReorderRouteStopsResponse(BaseModel):
+    """Response payload returning the reordered stops for the given route and trip_type."""
+    model_config = ConfigDict(from_attributes=True)
+
+    route_id : int
+    school_id: int
+    branch_id: int
+    trip_type: TripType
+    stop_ids : list[RouteStopResponse]
+
+
+class RouteStopReorderRequest(BaseModel):
+    """
+    Payload for POST /routes/routes/{route_id}/reorder-stops.
+    Bulk-reorders all stops of one trip_type on a route in a single call.
+
+    stop_ids must be the FULL, ORDERED list of route_stop_id values currently
+    assigned to this route + trip_type — position 0 becomes stop_sequence=1,
+    position 1 becomes stop_sequence=2, etc. Sending a partial list, or one
+    with route_stop_ids that don't belong to this route + trip_type, is
+    rejected (the set must match exactly).
+    """
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    stop_type: TripType
+    stop_ids : list[int] = Field(
+        min_length=1,
+        description="Ordered list of route_stop_id — NOT stop_id — in desired sequence.",
+    )
+# =============================================================================
 # Paginated Response Schemas
 # =============================================================================
 PaginatedRouteResponse = PaginatedResponse[RouteResponse]

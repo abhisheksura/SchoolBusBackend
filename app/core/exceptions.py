@@ -210,6 +210,11 @@ class StudentAlreadyAssignedError(ConflictError):
             detail="Student is already assigned to a route for this trip type."
         )
 
+class ReorderMismatchError(BadRequestError):
+    def __init__(self):
+        super().__init__(
+            detail="stop_ids must be exactly the set of route_stop_ids currently on this route for the given trip_type."
+        )
 
 # =============================================================================
 # 422 — Unprocessable Entity
