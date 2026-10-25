@@ -11,9 +11,10 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
-
+from app.core.enums import TripType
 from app.core.db.base import Base, TZDateTime
-
+from enum import Enum
+from sqlalchemy import Enum as SQLEnum
 
 # -----------------------------------------------------------------------------
 # StudentRouteAssignment
@@ -34,7 +35,14 @@ class StudentRouteAssignment(Base):
     student_id     : Mapped[int]      = mapped_column(Integer, nullable=False)
     route_id       : Mapped[int]      = mapped_column(Integer, nullable=False)
     stop_id        : Mapped[int]      = mapped_column(Integer, nullable=False)
-    assignment_type: Mapped[str]      = mapped_column(String(20), nullable=False)
+    assignment_type: Mapped[TripType]     = mapped_column(
+        SQLEnum(
+            TripType,
+            name="trip_type_enum",
+            native_enum=True,
+        ),
+        nullable=False,
+    )
     is_active      : Mapped[bool]     = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     assigned_at    : Mapped[datetime] = mapped_column(TZDateTime, nullable=False, server_default=func.now())
     updated_at     : Mapped[datetime] = mapped_column(TZDateTime, nullable=False, server_default=func.now(), onupdate=func.now())

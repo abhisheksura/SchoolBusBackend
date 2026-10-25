@@ -1,4 +1,4 @@
-from sqlalchemy import select, update, func
+from sqlalchemy import select, update, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.assignments.models import StudentRouteAssignment
@@ -75,22 +75,37 @@ async def get_all_assignments_by_route(
     assignment_type: TripType | None = None,
     active_only: bool = True,
 ) -> tuple[list[StudentRouteAssignment], int]:
-    query = select(StudentRouteAssignment).where(
-        StudentRouteAssignment.route_id == route_id,
-        StudentRouteAssignment.school_id == school_id,
-        StudentRouteAssignment.branch_id == branch_id,
-    )
-    if assignment_type:
-        query = query.where(StudentRouteAssignment.assignment_type == assignment_type.value)
-    if active_only:
-        query = query.where(StudentRouteAssignment.is_active == True)
 
-    total = await db.scalar(select(func.count()).select_from(query.subquery()))
+    # 1. Build common filter conditions
+    filters = []
+    if route_id is not None:
+        filters.append(StudentRouteAssignment.route_id == route_id)
+    if school_id is not None:
+        filters.append(StudentRouteAssignment.school_id == school_id)
+    if branch_id is not None:
+        filters.append(StudentRouteAssignment.branch_id == branch_id)
+    if assignment_type is not None:
+        filters.append(StudentRouteAssignment.assignment_type == assignment_type)
+    if active_only:
+        filters.append(StudentRouteAssignment.is_active == True)
+
+    # 2. Optimized direct Count (No subqueries, no string joins evaluated)
+    total = await db.scalar(
+        select(func.count(StudentRouteAssignment.assignment_id)).where(and_(*filters))
+    ) or 0
+
+    if total == 0:
+        return [], 0
+
+    # 3. Clean query fetching ONLY what this module owns
+    query = select(StudentRouteAssignment).where(and_(*filters))
+
     result = await db.execute(
         query.order_by(StudentRouteAssignment.assignment_type, StudentRouteAssignment.student_id)
-        .limit(limit).offset(offset)
+        .limit(limit)
+        .offset(offset)
     )
-    return list(result.scalars().all()), total or 0
+    return list(result.scalars().all()), total
 
 
 async def create_student_route_assignment(

@@ -4,7 +4,8 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.enums import TripType
-from app.core.schemas import PaginatedResponse
+from app.core.schemas import PaginatedResponse, TenantResponse
+from app.students.schemas import StudentSummary
 
 SchoolBranchField = Annotated[int, Field(gt=0, description="Must be a positive integer.")]
 
@@ -25,16 +26,19 @@ class StudentRouteAssignmentCreate(BaseModel):
     assignment_type: TripType
 
 
-class StudentRouteAssignmentResponse(BaseModel):
+class StudentRouteAssignmentResponse(TenantResponse):
     model_config = ConfigDict(from_attributes=True)
 
     assignment_id  : int
     school_id      : int
     branch_id      : int
     student_id     : int
+    student        : StudentSummary
     route_id       : int
     stop_id        : int
     assignment_type: str
+    route_name     : str
+    stop_name      : str
     is_active      : bool
     assigned_at    : datetime
     updated_at     : datetime

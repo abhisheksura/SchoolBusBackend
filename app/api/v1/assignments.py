@@ -77,7 +77,7 @@ async def get_route_assignments(
     page           : int             = Query(default=1, ge=1),
     page_size      : int             = Query(default=settings.DEFAULT_PAGE_SIZE, ge=1, le=settings.MAX_PAGE_SIZE),
     assignment_type: TripType | None = Query(default=None, description="Filter by PICKUP or DROPOFF."),
-    active_only    : bool            = Query(default=True),
+    active_only    : bool            = Query(default=False),
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = AnyAuthenticated,
 ) -> PaginatedAssignmentResponse:
@@ -88,7 +88,6 @@ async def get_route_assignments(
         branch_id=branch_id,
         page=page,
         page_size=page_size,
-        accessible_branch_ids=current_user.get_accessible_branch_ids(school_id),
         assignment_type=assignment_type,
         active_only=active_only,
     )

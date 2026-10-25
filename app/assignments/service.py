@@ -11,6 +11,10 @@ from app.core.config import settings
 from app.core.enums import TripType
 from app.core.exceptions import StudentAlreadyAssignedError, TripNotFoundError
 from app.core.schemas import paginate, pagination_params
+from app.core.utils import get_tenant_names, to_tenant_response, get_route_names, get_stop_names
+from app.students import repository as student_repo
+from app.students.mapper import to_student_summary
+from app.students.schemas import StudentSummary
 
 
 async def assign_student_to_route(
@@ -74,15 +78,13 @@ async def get_route_assignments(
     branch_id: int,
     page: int,
     page_size: int,
-    accessible_branch_ids: list[int] | None,
     assignment_type: TripType | None = None,
-    active_only: bool = True,
+    active_only: bool = False,
 ) -> PaginatedAssignmentResponse:
     """Scope check BEFORE DB hit."""
-    if accessible_branch_ids is not None and branch_id not in accessible_branch_ids:
-        raise TripNotFoundError(identifier=route_id)
 
     limit, offset = pagination_params(page, page_size, settings.MAX_PAGE_SIZE)
+
     assignments, total = await assignment_repo.get_all_assignments_by_route(
         db=db,
         route_id=route_id,
@@ -93,9 +95,75 @@ async def get_route_assignments(
         assignment_type=assignment_type,
         active_only=active_only,
     )
+
+    # Get the student Details
+    student_ids = [a.student_id for a in assignments]
+    student_map = await student_repo.get_students_by_ids(
+        db=db,
+        school_id=school_id,
+        branch_id=branch_id,
+        student_ids=student_ids,
+    )
+    # 3. Short-circuit: skip cache parsing entirely if page is empty
+    if not assignments:
+        return paginate(
+            items=[],
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
+    
+    school_name, branch_name = await get_tenant_names(db, school_id, branch_id)
+    # Tenant-scoped name lookups — cached in-memory per (school_id, branch_id).
+    # Fetched once per page, not once per assignment — avoids N+1 queries
+    # while resolving route_name / stop_name for every row on this page.
+    route_names = await get_route_names(db, school_id, branch_id)
+    stop_names = await get_stop_names(db, school_id, branch_id)
+
+    # 5. Map DB models -> API response
+    mapped_items: list[StudentRouteAssignmentResponse] = []
+
+    for assignment in assignments:
+        student = student_map.get(assignment.student_id)
+
+        if student is None:
+            # This should never happen if referential integrity is maintained
+            raise ValueError(
+                f"Student {assignment.student_id} not found for "
+                f"assignment {assignment.assignment_id}"
+            )
+
+        mapped_items.append(
+            StudentRouteAssignmentResponse(
+                assignment_id=assignment.assignment_id,
+                school_id=assignment.school_id,
+                branch_id=assignment.branch_id,
+
+                school_name=school_name,
+                branch_name=branch_name,
+
+                student_id=assignment.student_id,
+                student=to_student_summary(student),
+
+                route_id=assignment.route_id,
+                route_name=route_names.get(assignment.route_id, "Unknown Route"),
+
+                stop_id=assignment.stop_id,
+                stop_name=stop_names.get(assignment.stop_id, "Unknown Stop"),
+
+                assignment_type=assignment.assignment_type,
+                is_active=assignment.is_active,
+
+                assigned_at=assignment.assigned_at,
+                updated_at=assignment.updated_at,
+            )
+        )
+    # 6. Return standard paginated payload structure
     return paginate(
-        items=[StudentRouteAssignmentResponse.model_validate(a) for a in assignments],
-        total=total, page=page, page_size=page_size,
+        items=mapped_items,
+        total=total,
+        page=page,
+        page_size=page_size,
     )
 
 
