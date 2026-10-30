@@ -1,5 +1,6 @@
 from sqlalchemy import select, update, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 
 from app.assignments.models import StudentRouteAssignment
 from app.core.enums import TripType
@@ -12,14 +13,24 @@ async def get_assignment_by_id(
     school_id: int,
     branch_id: int,
 ) -> StudentRouteAssignment:
-    result = await db.execute(
-        select(StudentRouteAssignment).where(
+    stmt = (
+        select(StudentRouteAssignment)
+        .options(
+            joinedload(StudentRouteAssignment.student),
+            joinedload(StudentRouteAssignment.route),
+            joinedload(StudentRouteAssignment.stop),
+        )
+        .where(
             StudentRouteAssignment.assignment_id == assignment_id,
             StudentRouteAssignment.school_id == school_id,
             StudentRouteAssignment.branch_id == branch_id,
         )
     )
-    assignment = result.scalar_one_or_none()
+
+    result = await db.execute(stmt)
+
+    assignment = result.unique().scalar_one_or_none()
+
     if not assignment:
         raise TripNotFoundError(identifier=assignment_id)
     return assignment
@@ -123,11 +134,11 @@ async def create_student_route_assignment(
         student_id=student_id,
         route_id=route_id,
         stop_id=stop_id,
-        assignment_type=assignment_type.value,
+        assignment_type=assignment_type,
     )
     db.add(assignment)
     await db.flush()
-    await db.refresh(assignment)
+    # await db.refresh(assignment)
     return assignment
 
 

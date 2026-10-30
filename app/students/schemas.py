@@ -100,7 +100,7 @@ class StudentSummary(BaseModel):
     grade           : str | None
     section         : str | None
 
-    parent_name     : str | None
+    parent_name     : str | None = None
     parent_phone    : str | None = None
 
     model_config = ConfigDict(from_attributes=True)

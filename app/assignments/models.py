@@ -10,11 +10,13 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.enums import TripType
 from app.core.db.base import Base, TZDateTime
 from enum import Enum
 from sqlalchemy import Enum as SQLEnum
+from app.students.models import Student
+from app.routes.models import Route, Stop
 
 # -----------------------------------------------------------------------------
 # StudentRouteAssignment
@@ -47,6 +49,60 @@ class StudentRouteAssignment(Base):
     assigned_at    : Mapped[datetime] = mapped_column(TZDateTime, nullable=False, server_default=func.now())
     updated_at     : Mapped[datetime] = mapped_column(TZDateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 
+    # Relationships
+    student: Mapped["Student"] = relationship(
+        "Student",
+        primaryjoin=(
+            "and_("
+            "StudentRouteAssignment.student_id == Student.student_id, "
+            "StudentRouteAssignment.branch_id == Student.branch_id, "
+            "StudentRouteAssignment.school_id == Student.school_id"
+            ")"
+        ),
+        foreign_keys=(
+            "[StudentRouteAssignment.student_id, "
+            "StudentRouteAssignment.branch_id, "
+            "StudentRouteAssignment.school_id]"
+        ),
+        viewonly=True,
+        lazy="noload",
+    )
+
+    route: Mapped["Route"] = relationship(
+        "Route",
+        primaryjoin=(
+            "and_("
+            "StudentRouteAssignment.route_id == Route.route_id, "
+            "StudentRouteAssignment.branch_id == Route.branch_id, "
+            "StudentRouteAssignment.school_id == Route.school_id"
+            ")"
+        ),
+        foreign_keys=(
+            "[StudentRouteAssignment.route_id, "
+            "StudentRouteAssignment.branch_id, "
+            "StudentRouteAssignment.school_id]"
+        ),
+        viewonly=True,
+        lazy="noload",
+    )
+
+    stop: Mapped["Stop"] = relationship(
+        "Stop",
+        primaryjoin=(
+            "and_("
+            "StudentRouteAssignment.stop_id == Stop.stop_id, "
+            "StudentRouteAssignment.branch_id == Stop.branch_id, "
+            "StudentRouteAssignment.school_id == Stop.school_id"
+            ")"
+        ),
+        foreign_keys=(
+            "[StudentRouteAssignment.stop_id, "
+            "StudentRouteAssignment.branch_id, "
+            "StudentRouteAssignment.school_id]"
+        ),
+        viewonly=True,
+        lazy="noload",
+    )
     __table_args__ = (
         ForeignKeyConstraint(
             ["branch_id", "school_id"],

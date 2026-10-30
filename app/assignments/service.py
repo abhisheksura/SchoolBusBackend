@@ -6,6 +6,7 @@ from app.assignments.schemas import (
     PaginatedAssignmentResponse,
     StudentRouteAssignmentCreate,
     StudentRouteAssignmentResponse,
+    StudentRouteAssignmentMapper
 )
 from app.core.config import settings
 from app.core.enums import TripType
@@ -15,7 +16,6 @@ from app.core.utils import get_tenant_names, to_tenant_response, get_route_names
 from app.students import repository as student_repo
 from app.students.mapper import to_student_summary
 from app.students.schemas import StudentSummary
-
 
 async def assign_student_to_route(
     db: AsyncSession,
@@ -50,7 +50,14 @@ async def assign_student_to_route(
     except IntegrityError:
         raise StudentAlreadyAssignedError()
 
-    return StudentRouteAssignmentResponse.model_validate(assignment)
+    assignment = await assignment_repo.get_assignment_by_id(
+        db=db,
+        assignment_id=assignment.assignment_id,
+        school_id=payload.school_id,
+        branch_id=payload.branch_id,
+    )
+
+    return StudentRouteAssignmentMapper.to_response(assignment)
 
 
 async def get_student_assignments(
