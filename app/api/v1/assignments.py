@@ -6,11 +6,13 @@ from app.assignments.schemas import (
     PaginatedAssignmentResponse,
     StudentRouteAssignmentCreate,
     StudentRouteAssignmentResponse,
+    StudentRouteAssignmentUpdate
 )
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.enums import RoleName, TripType
 from app.api.v1.dependencies import AnyAuthenticated, CurrentUser, require_roles
+from app.core.schemas import TenantScopeRequest
 
 router = APIRouter(prefix = "/assignments")
 
@@ -93,24 +95,57 @@ async def get_route_assignments(
     )
 
 
-@router.delete(
+
+@router.patch(
     "/{assignment_id}",
     response_model=StudentRouteAssignmentResponse,
     status_code=status.HTTP_200_OK,
-    summary="Deactivate student route assignment",
-    description="Soft-delete a student route assignment. BRANCH_ADMIN or above required.",
+    summary="Update the student route assignment",
+    description="Partially update an assignment (student, route, stop or trip type). BRANCH_ADMIN or above required.",
 )
-async def deactivate_assignment(
+async def update_assignment(
     assignment_id: int,
+    payload      : StudentRouteAssignmentUpdate,
     school_id    : int = Query(...),
     branch_id    : int = Query(...),
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = AssignmentAdminRequired,
 ) -> StudentRouteAssignmentResponse:
-    return await assignment_service.deactivate_assignment(
+    return await assignment_service.update_assignment(
         db=db,
         assignment_id=assignment_id,
         school_id=school_id,
         branch_id=branch_id,
-        accessible_branch_ids=current_user.get_accessible_branch_ids(school_id),
+        payload=payload,
+    )
+
+@router.patch("/{assignment_id}/deactivate", response_model=StudentRouteAssignmentResponse,
+              status_code=status.HTTP_200_OK, summary="Deactivate student route assignment",
+              description="Soft-delete a student route assignment. BRANCH_ADMIN or above required.")
+async def deactivate_assignment(
+    assignment_id: int,
+    scope        : TenantScopeRequest,          # school_id + branch_id in the body
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = AssignmentAdminRequired,
+) -> StudentRouteAssignmentResponse:
+    return await assignment_service.deactivate_assignment(
+        db=db, assignment_id=assignment_id,
+        school_id=scope.school_id, branch_id=scope.branch_id,
+        accessible_branch_ids=current_user.get_accessible_branch_ids(scope.school_id),
+    )
+
+
+@router.patch("/{assignment_id}/reactivate", response_model=StudentRouteAssignmentResponse,
+              status_code=status.HTTP_200_OK, summary="Reactivate student route assignment",
+              description="Reactivate a soft-deleted assignment. BRANCH_ADMIN or above required.")
+async def reactivate_assignment(
+    assignment_id: int,
+    scope        : TenantScopeRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = AssignmentAdminRequired,
+) -> StudentRouteAssignmentResponse:
+    return await assignment_service.reactivate_assignment(
+        db=db, assignment_id=assignment_id,
+        school_id=scope.school_id, branch_id=scope.branch_id,
+        accessible_branch_ids=current_user.get_accessible_branch_ids(scope.school_id),
     )

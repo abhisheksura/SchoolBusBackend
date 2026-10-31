@@ -173,6 +173,31 @@ async def get_route_assignments(
         page_size=page_size,
     )
 
+async def update_assignment(
+    db: AsyncSession,
+    assignment_id: int,
+    school_id: int,
+    branch_id: int,
+    payload,
+) -> StudentRouteAssignmentResponse:
+    """Update a route. Role check enforced at router."""
+    try:
+        assignment = await assignment_repo.update_assignment_by_id(
+            db=db,
+            assignment_id=assignment_id,
+            school_id=school_id,
+            branch_id=branch_id,
+            **payload.model_dump(exclude_unset=True),
+        )
+    except IntegrityError:
+        raise StudentAlreadyAssignedError()
+    assignment = await assignment_repo.get_assignment_by_id(
+            db=db,
+            assignment_id=assignment.assignment_id,
+            school_id=school_id,
+            branch_id=branch_id,
+        )
+    return StudentRouteAssignmentMapper.to_response(assignment)
 
 async def deactivate_assignment(
     db: AsyncSession,
@@ -188,4 +213,35 @@ async def deactivate_assignment(
     assignment = await assignment_repo.deactivate_assignment_by_id(
         db, assignment_id, school_id, branch_id
     )
-    return StudentRouteAssignmentResponse.model_validate(assignment)
+
+    assignment = await assignment_repo.get_assignment_by_id(
+        db=db,
+        assignment_id=assignment_id,
+        school_id=school_id,
+        branch_id=branch_id,
+    )
+
+    return StudentRouteAssignmentMapper.to_response(assignment=assignment)
+
+
+async def reactivate_assignment(
+    db: AsyncSession,
+    assignment_id: int,
+    school_id: int,
+    branch_id: int,
+    accessible_branch_ids: list[int] | None,
+) -> StudentRouteAssignmentResponse:
+    """Scope check BEFORE DB hit. Role check enforced at router."""
+    if accessible_branch_ids is not None and branch_id not in accessible_branch_ids:
+        raise TripNotFoundError(identifier=assignment_id)
+
+    assignment = await assignment_repo.reactivate_assignment_by_id(
+        db, assignment_id, school_id, branch_id
+    )
+    assignment = await assignment_repo.get_assignment_by_id(
+        db=db,
+        assignment_id=assignment_id,
+        school_id=school_id,
+        branch_id=branch_id,
+    )
+    return StudentRouteAssignmentMapper.to_response(assignment=assignment)

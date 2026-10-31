@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from app.assignments.models import StudentRouteAssignment
+from app.routes.models import RouteStop
 from app.core.enums import TripType
 from app.core.exceptions import StudentAlreadyAssignedError, TripNotFoundError
 
@@ -25,6 +26,7 @@ async def get_assignment_by_id(
             StudentRouteAssignment.school_id == school_id,
             StudentRouteAssignment.branch_id == branch_id,
         )
+        .execution_options(populate_existing=True)
     )
 
     result = await db.execute(stmt)
@@ -109,10 +111,21 @@ async def get_all_assignments_by_route(
         return [], 0
 
     # 3. Clean query fetching ONLY what this module owns
-    query = select(StudentRouteAssignment).where(and_(*filters))
+    query = (
+        select(StudentRouteAssignment)
+        .join(
+        RouteStop,
+        and_(
+            StudentRouteAssignment.route_id == RouteStop.route_id,
+            StudentRouteAssignment.stop_id == RouteStop.stop_id,
+            StudentRouteAssignment.school_id == RouteStop.school_id,
+            StudentRouteAssignment.branch_id == RouteStop.branch_id,
+            StudentRouteAssignment.assignment_type == RouteStop.trip_type,
+        ),
+    ).where(and_(*filters)))
 
     result = await db.execute(
-        query.order_by(StudentRouteAssignment.assignment_type, StudentRouteAssignment.student_id)
+        query.order_by(RouteStop.stop_sequence.asc(), StudentRouteAssignment.assignment_type, StudentRouteAssignment.student_id)
         .limit(limit)
         .offset(offset)
     )
@@ -141,6 +154,26 @@ async def create_student_route_assignment(
     # await db.refresh(assignment)
     return assignment
 
+async def update_assignment_by_id(db, assignment_id: int, school_id: int, branch_id: int, **kwargs):
+    """Update assignment fields. Uses RETURNING — single round-trip."""
+    values = dict(kwargs)
+    values["updated_at"] = func.now()
+    result = await db.execute(
+        update(StudentRouteAssignment)
+        .where(StudentRouteAssignment.assignment_id == assignment_id,
+               StudentRouteAssignment.school_id == school_id,
+               StudentRouteAssignment.branch_id == branch_id)
+        .values(**values)
+        .returning(StudentRouteAssignment)
+        .execution_options(populate_existing=True)
+    )
+    assignment = result.scalar_one_or_none()
+    if not assignment:
+        raise TripNotFoundError(identifier=assignment_id)
+
+    await db.flush()
+    return assignment
+
 
 async def deactivate_assignment_by_id(
     db: AsyncSession,
@@ -157,6 +190,23 @@ async def deactivate_assignment_by_id(
             StudentRouteAssignment.branch_id == branch_id,
         )
         .values(is_active=False, updated_at=func.now())
+        .returning(StudentRouteAssignment)
+    )
+    await db.flush()
+    assignment = result.scalar_one_or_none()
+    if not assignment:
+        raise TripNotFoundError(identifier=assignment_id)
+    return assignment
+
+
+async def reactivate_assignment_by_id(db, assignment_id: int, school_id: int, branch_id: int):
+    """Reactivate a soft-deleted assignment. Uses RETURNING — single round-trip."""
+    result = await db.execute(
+        update(StudentRouteAssignment)
+        .where(StudentRouteAssignment.assignment_id == assignment_id,
+               StudentRouteAssignment.school_id == school_id,
+               StudentRouteAssignment.branch_id == branch_id)
+        .values(is_active=True, updated_at=func.now())
         .returning(StudentRouteAssignment)
     )
     await db.flush()

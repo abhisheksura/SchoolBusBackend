@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.core.enums import TripType
 from app.core.schemas import PaginatedResponse, TenantResponse
@@ -25,6 +25,25 @@ class StudentRouteAssignmentCreate(BaseModel):
     stop_id        : int     = Field(gt=0)
     assignment_type: TripType
 
+class StudentRouteAssignmentUpdate(BaseModel):
+    """
+    Payload for PATCH /assignments/{assignment_id}.
+    All fields optional — use exclude_unset=True in service.
+    school_id / branch_id are NOT updatable; they scope the request.
+    """
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    student_id     : int      | None = Field(default=None, gt=0)
+    route_id       : int      | None = Field(default=None, gt=0)
+    stop_id        : int      | None = Field(default=None, gt=0)
+    assignment_type: TripType | None = None
+
+    @model_validator(mode="after")
+    def at_least_one_field(self) -> "StudentRouteAssignmentUpdate":
+        if all(v is None for v in [self.student_id, self.route_id,
+                                   self.stop_id, self.assignment_type]):
+            raise ValueError("At least one field must be provided for update.")
+        return self
 
 class StudentRouteAssignmentResponse(TenantResponse):
     model_config = ConfigDict(from_attributes=True)
