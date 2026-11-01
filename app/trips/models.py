@@ -12,6 +12,7 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.dialects.postgresql import ENUM
 
 from app.core.db.base import Base, TZDateTime
 from app.core.enums import TripStatus, TripType
@@ -38,12 +39,23 @@ class Trip(Base):
     bus_id           : Mapped[int | None]      = mapped_column(Integer, ForeignKey("buses.bus_id", ondelete="SET NULL"), nullable=True)
     driver_id        : Mapped[int | None]      = mapped_column(Integer, ForeignKey("drivers.driver_id", ondelete="SET NULL"), nullable=True)
     service_date     : Mapped[date]            = mapped_column(Date, nullable=False)
-    trip_type        : Mapped[str]             = mapped_column(String(20), nullable=False)
-    trip_status      : Mapped[str]             = mapped_column(
-        String(20),
+    trip_type: Mapped[TripType] = mapped_column(
+        ENUM(
+            TripType,
+            name="trip_type_enum",
+            create_type=False,
+        ),
         nullable=False,
-        default=TripStatus.SCHEDULED.value,
-        server_default=TripStatus.SCHEDULED.value,
+    )
+
+    trip_status: Mapped[TripStatus] = mapped_column(
+        ENUM(
+            TripStatus,
+            name="trip_status_enum",
+            create_type=False,
+        ),
+        nullable=False,
+        default=TripStatus.SCHEDULED,
     )
     actual_start_time: Mapped[datetime | None] = mapped_column(TZDateTime, nullable=True)
     actual_end_time  : Mapped[datetime | None] = mapped_column(TZDateTime, nullable=True)
